@@ -250,6 +250,47 @@ print("MONDAY ITEM FOUND")
 
 print(f"UI_STEP:Uploading file")
 
+# =========================
+# CHECK IF FILE ALREADY EXISTS IN MONDAY
+# =========================
+
+check_query = f"""
+query {{
+  items(ids: [{item_id}]) {{
+    assets {{
+      name
+      url
+    }}
+  }}
+}}
+"""
+
+check_data = monday_query(check_query)
+existing_files = []
+
+if check_data and "items" in check_data:
+    for item in check_data["items"]:
+        for asset in item.get("assets", []):
+            existing_files.append(asset.get("name", ""))
+
+contract_lower = contract_file_name.lower()
+
+already_uploaded = any(
+    contract_lower in f.lower() or f.lower() in contract_lower
+    for f in existing_files
+)
+
+if already_uploaded:
+    print(f"UI_CONTRACT_EXISTS:{contract_file_name}")
+    sys.stdout.flush()
+    response = sys.stdin.readline().strip()
+    if response == "SKIP":
+        print("CONTRACT ALREADY ON MONDAY — SKIPPING UPLOAD")
+        print("DONE")
+        sys.exit()
+    else:
+        print("RE-UPLOADING CONTRACT TO MONDAY")
+
 mime_type = (
     mimetypes.guess_type(contract_pdf)[0]
     or "application/pdf"
@@ -291,4 +332,27 @@ if "errors" in upload_data:
     raise Exception("MONDAY FILE UPLOAD ERROR")
 
 print("CONTRACT UPLOADED TO MONDAY FILES")
+
+# Write upload status to INFO file
+import glob
+archive_folder = os.path.join(project_root, "CALCULATIONS", "ARCHIVE")
+info_files = sorted(
+    glob.glob(os.path.join(archive_folder, f"{project_number}*INFO*.txt")),
+    key=os.path.getmtime, reverse=True
+)
+if info_files:
+    with open(info_files[0], "r", encoding="utf-8") as f:
+        lines = f.readlines()
+    if not any(l.startswith("MONDAY_UPLOADED=") for l in lines):
+        lines.append("MONDAY_UPLOADED=Y\n")
+    else:
+        lines = [
+            f"MONDAY_UPLOADED=Y\n"
+            if l.startswith("MONDAY_UPLOADED=") else l
+            for l in lines
+        ]
+    with open(info_files[0], "w", encoding="utf-8") as f:
+        f.writelines(lines)
+    print("MONDAY UPLOAD STATUS SAVED TO INFO FILE")
+
 print("DONE")

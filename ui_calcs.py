@@ -197,6 +197,8 @@ class Signals(QObject):
     req_confirm_tot   = Signal(str)             # tot_status
     req_addr_mismatch = Signal(str, str)        # info_addr, found_addr
     req_monday_mismatch = Signal(str, str)      # monday_name, local_name
+    req_info_exists     = Signal(str)           # existing_info_path
+    req_contract_exists = Signal(str)    
 
 signals = Signals()
 
@@ -389,27 +391,50 @@ class ManualAddressDialog(SAXDialog):
         self.result_address = addr; self.accept()
 
 class APNDialog(SAXDialog):
-    def __init__(self, parent, current_apn):
+    def __init__(self, parent, current_apn, contract_pdf=""):
         super().__init__(parent, "Verify APN")
+        self._contract_pdf = contract_pdf
         self.result_apn = current_apn
         self.main_layout.addWidget(self._title_label("Verify the APN."))
         self.main_layout.addWidget(self._info_box("APN FROM INFO FILE", current_apn))
-        self.main_layout.addWidget(self._body_label("If correct, click Confirm. If not, edit the boxes below."))
-        apn_lbl = QLabel("APN"); apn_lbl.setFont(QFont("Arial", 9, QFont.Bold))
+        self.main_layout.addWidget(self._body_label(
+            "If correct, click Confirm. If not, edit the boxes below."
+        ))
+        apn_lbl = QLabel("APN")
+        apn_lbl.setFont(QFont("Arial", 9, QFont.Bold))
         apn_lbl.setStyleSheet(f"color:{SUBTEXT};letter-spacing:1px;")
         self.main_layout.addWidget(apn_lbl)
-        self.apn_widget = APNWidget(); self.apn_widget.set_apn(current_apn)
+        self.apn_widget = APNWidget()
+        self.apn_widget.set_apn(current_apn)
         self.main_layout.addWidget(self.apn_widget)
-        self.error_label = QLabel(""); self.error_label.setStyleSheet(f"color:{RED};font-size:11px;")
+        self.error_label = QLabel("")
+        self.error_label.setStyleSheet(f"color:{RED};font-size:11px;")
         self.main_layout.addWidget(self.error_label)
+
+        open_btn = QPushButton("Open Contract PDF")
+        open_btn.setStyleSheet(DIALOG_BTN_NO)
+        open_btn.clicked.connect(self._open_pdf)
+        self.main_layout.addWidget(open_btn)
+
         row, yes_btn, _ = self._btn_row("Confirm APN", "Cancel")
-        yes_btn.clicked.disconnect(); yes_btn.clicked.connect(self._confirm)
+        yes_btn.clicked.disconnect()
+        yes_btn.clicked.connect(self._confirm)
         self.main_layout.addLayout(row)
+
+    def _open_pdf(self):
+        if self._contract_pdf and os.path.exists(self._contract_pdf):
+            os.startfile(self._contract_pdf)
+        else:
+            self.error_label.setText("Contract PDF not found.")
 
     def _confirm(self):
         if not self.apn_widget.is_valid():
-            self.error_label.setText("APN must be XXX-XXX-XXX with 3 digits each."); return
-        self.result_apn = self.apn_widget.get_apn(); self.accept()
+            self.error_label.setText(
+                "APN must be XXX-XXX-XXX with 3 digits each."
+            )
+            return
+        self.result_apn = self.apn_widget.get_apn()
+        self.accept()
 
 class AddressMismatchDialog(SAXDialog):
     def __init__(self, parent, info_address, found_address):
@@ -628,6 +653,24 @@ class ScriptRunner(QObject):
                 self._proc.stdin.flush()
                 continue
 
+            if line.startswith("UI_CONTRACT_EXISTS:"):
+                contract_name = line.replace("UI_CONTRACT_EXISTS:", "").strip()
+                signals.req_contract_exists.emit(contract_name)
+                try: result = self._result_queue.get(timeout=60)
+                except Exception: result = "SKIP"
+                self._proc.stdin.write(result + "\n")
+                self._proc.stdin.flush()
+                continue
+
+            if line.startswith("UI_INFO_EXISTS:"):
+                existing_path = line.replace("UI_INFO_EXISTS:", "").strip()
+                signals.req_info_exists.emit(existing_path)
+                try: result = self._result_queue.get(timeout=60)
+                except Exception: result = "NEW"
+                self._proc.stdin.write(result + "\n")
+                self._proc.stdin.flush()
+                continue
+
             if line.startswith("UI_MONDAY_MISMATCH:"):
                 parts = line.replace("UI_MONDAY_MISMATCH:", "").strip().split("|")
                 signals.req_monday_mismatch.emit(
@@ -693,6 +736,8 @@ class SAXWindow(QMainWindow):
         signals.req_confirm_tot.connect(self.handle_confirm_tot)
         signals.req_addr_mismatch.connect(self.handle_addr_mismatch)
         signals.req_monday_mismatch.connect(self.handle_monday_mismatch)
+        signals.req_info_exists.connect(self.handle_info_exists)
+        signals.req_contract_exists.connect(self.handle_contract_exists)
 
         self._build_ui()
         self._build_stage_buttons(DEFAULT_STAGES, enabled=False)
@@ -719,8 +764,11 @@ class SAXWindow(QMainWindow):
         else:
             runner.put_result("")
 
-    def handle_confirm_apn(self, current_apn):
-        dlg = APNDialog(self, current_apn)
+    def handle_confirm_apn(self, payload):
+        parts = payload.split("|")
+        current_apn  = parts[0] if len(parts) > 0 else ""
+        contract_pdf = parts[1] if len(parts) > 1 else ""
+        dlg = APNDialog(self, current_apn, contract_pdf)
         if dlg.exec() == QDialog.Accepted:
             runner.put_result(dlg.result_apn)
         else:
@@ -748,6 +796,92 @@ class SAXWindow(QMainWindow):
         row, _, _ = dlg._btn_row("Yes — Use This", "No — Cancel")
         dlg.main_layout.addLayout(row)
         runner.put_result("Y" if dlg.exec() == QDialog.Accepted else "N")
+
+    def handle_info_exists(self, files_str):
+        from datetime import datetime
+        files = files_str.split("|")
+        dlg = SAXDialog(self, "INFO File Already Exists")
+        dlg.main_layout.addWidget(
+            dlg._title_label(
+                f"{len(files)} INFO file(s) found for this project."
+            )
+        )
+        dlg.main_layout.addWidget(
+            dlg._body_label("What would you like to do?")
+        )
+        for f in files:
+            try:
+                modified = os.path.getmtime(f)
+                date_str = datetime.fromtimestamp(
+                    modified
+                ).strftime("%m/%d/%y %I:%M %p")
+                label = f"{os.path.basename(f)}  —  {date_str}"
+            except Exception:
+                label = os.path.basename(f)
+            dlg.main_layout.addWidget(
+                dlg._info_box("FILE", label)
+            )
+    def handle_contract_exists(self, contract_name):
+        dlg = SAXDialog(self, "Contract Already on Monday")
+        dlg.main_layout.addWidget(
+            dlg._title_label(
+                "A contract file was found in Monday.com."
+            )
+        )
+        dlg.main_layout.addWidget(
+            dlg._info_box("FILE FOUND", contract_name)
+        )
+        dlg.main_layout.addWidget(
+            dlg._body_label(
+                "This contract appears to already be uploaded. "
+                "Would you like to skip or re-upload?"
+            )
+        )
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        row.addStretch()
+        reupload_btn = QPushButton("Re-Upload")
+        reupload_btn.setStyleSheet(DIALOG_BTN_NO)
+        reupload_btn.clicked.connect(lambda: dlg.done(2))
+        skip_btn = QPushButton("Skip")
+        skip_btn.setStyleSheet(DIALOG_BTN)
+        skip_btn.clicked.connect(dlg.accept)
+        skip_btn.setDefault(True)
+        row.addWidget(reupload_btn)
+        row.addWidget(skip_btn)
+        dlg.main_layout.addLayout(row)
+        result = dlg.exec()
+        if result == 2:
+            runner.put_result("REUPLOAD")
+        else:
+            runner.put_result("SKIP")
+
+
+
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        row.addStretch()
+        skip_btn = QPushButton("Skip")
+        skip_btn.setStyleSheet(DIALOG_BTN_NO)
+        skip_btn.clicked.connect(lambda: dlg.done(3))
+        overwrite_btn = QPushButton("Overwrite Most Recent")
+        overwrite_btn.setStyleSheet(DIALOG_BTN_NO)
+        overwrite_btn.clicked.connect(lambda: dlg.done(2))
+        new_btn = QPushButton("Create New")
+        new_btn.setStyleSheet(DIALOG_BTN)
+        new_btn.clicked.connect(dlg.accept)
+        new_btn.setDefault(True)
+        row.addWidget(skip_btn)
+        row.addWidget(overwrite_btn)
+        row.addWidget(new_btn)
+        dlg.main_layout.addLayout(row)
+        result = dlg.exec()
+        if result == 3:
+            runner.put_result("SKIP")
+        elif result == 2:
+            runner.put_result("OVERWRITE")
+        else:
+            runner.put_result("NEW") 
 
     # =========================
     # BUILD UI
@@ -921,6 +1055,8 @@ class SAXWindow(QMainWindow):
         if not success:
             self.append_log("ERROR: INFO stage failed.")
             self._finish_load(); return
+
+        
 
         dlg = MondayUploadDialog(self, self.project_name)
         if dlg.exec() == QDialog.Accepted:

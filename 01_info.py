@@ -66,24 +66,6 @@ archive_folder = os.path.join(
 os.makedirs(archive_folder, exist_ok=True)
 
 # =========================
-# INFO FILE NAME
-# =========================
-
-today = datetime.now()
-
-formatted_date = (
-    f"{today.month}."
-    f"{today.day}."
-    f"{str(today.year)[2:]}"
-)
-
-info_filename = (
-    f"{project_number} INFO - {formatted_date}.txt"
-)
-
-info_path = os.path.join(archive_folder, info_filename)
-
-# =========================
 # FIND CONTRACT PDF
 # =========================
 
@@ -101,6 +83,73 @@ if contract_pdf == "":
     raise Exception("NO CONTRACT PDF FOUND")
 
 print(f"CONTRACT PDF FOUND")
+sys.stdout.flush()
+
+# =========================
+# CHECK IF INFO FILE EXISTS
+# =========================
+
+existing_infos = []
+for file in os.listdir(archive_folder):
+    upper = file.upper()
+    if (
+        file.endswith(".txt")
+        and "INFO" in upper
+        and project_number in upper
+    ):
+        existing_infos.append(
+            os.path.join(archive_folder, file)
+        )
+
+existing_infos.sort(key=os.path.getmtime, reverse=True)
+
+info_path = ""
+overwriting = False
+
+if len(existing_infos) > 0:
+    files_str = "|".join(existing_infos)
+    print(f"UI_INFO_EXISTS:{files_str}")
+    sys.stdout.flush()
+    response = sys.stdin.readline().strip()
+    if response == "SKIP":
+        print("INFO FILE ALREADY EXISTS — SKIPPING")
+        print("DONE")
+        sys.exit()
+    elif response == "OVERWRITE":
+        print("OVERWRITING MOST RECENT INFO FILE")
+        info_path = existing_infos[0]
+        overwriting = True
+    else:
+        print("CREATING NEW INFO FILE")
+
+# =========================
+# BUILD NEW INFO FILE PATH
+# =========================
+
+if not info_path:
+    today = datetime.now()
+    formatted_date = (
+        f"{today.month}."
+        f"{today.day}."
+        f"{str(today.year)[2:]}"
+    )
+    base_name = f"{project_number} INFO - {formatted_date}"
+    extension = ".txt"
+    info_path = os.path.join(
+        archive_folder, f"{base_name}{extension}"
+    )
+    counter = 2
+    while os.path.exists(info_path):
+        info_path = os.path.join(
+            archive_folder,
+            f"{base_name} ({counter}){extension}"
+        )
+        counter += 1
+
+# =========================
+# OPEN PDF DIALOG
+# =========================
+
 print(f"UI_OPEN_PDF:{contract_pdf}")
 sys.stdout.flush()
 
@@ -117,6 +166,9 @@ with pdfplumber.open(contract_pdf) as pdf:
         extracted = page.extract_text()
         if extracted:
             text += extracted + "\n"
+
+print("Extracting PDF info...")
+sys.stdout.flush()
 
 # =========================
 # PROJECT DESCRIPTION
@@ -174,8 +226,7 @@ try:
             for j in range(i, min(i + 10, len(lines))):
                 possible_address = lines[j].strip()
                 has_number = any(
-                    char.isdigit()
-                    for char in possible_address
+                    char.isdigit() for char in possible_address
                 )
                 has_comma = "," in possible_address
                 if has_number and has_comma:
@@ -210,15 +261,11 @@ except Exception as e:
 
 if good_template == False:
     print("BAD TEMPLATE DETECTED")
-    # Signal UI to open PDF and ask for manual address
     print(f"UI_BAD_TEMPLATE:{contract_pdf}")
     sys.stdout.flush()
-
     manual_address = sys.stdin.readline().strip()
-
     if manual_address == "" or manual_address == "CANCELLED":
         raise Exception("NO MANUAL ADDRESS ENTERED")
-
     street_address = manual_address
     manual_project_address = manual_address
 
@@ -238,14 +285,12 @@ for line in lines:
             county = "PLACER"
         elif "nevada" in lower_line:
             county = "NEVADA"
-
         raw_apn_match = re.search(
             r"(\d[\d\-]{6,20}\d)", line
         )
         if raw_apn_match:
             raw_apn = raw_apn_match.group(1)
             apn_digits = re.sub(r"\D", "", raw_apn)
-
             if len(apn_digits) >= 9:
                 core_digits = apn_digits[:9]
                 apn = (
@@ -295,13 +340,10 @@ for i, line in enumerate(lines):
                 word_count = len(clean_name.split())
                 if word_count >= 2 and word_count <= 5:
                     has_letter = any(
-                        char.isalpha()
-                        for char in clean_name
+                        char.isalpha() for char in clean_name
                     )
                     if has_letter:
-                        client_names.append(
-                            clean_name.upper()
-                        )
+                        client_names.append(clean_name.upper())
             break
 
 client_names = list(dict.fromkeys(client_names))
@@ -366,9 +408,7 @@ with open(info_path, "w", encoding="utf-8") as file:
     file.write(f"PROJECT_NAME={project_name}\n\n")
     file.write(f"TOT=\n\n")
     file.write(f"PROJECT_ADDRESS={street_address}\n")
-    file.write(
-        f"MANUAL_PROJECT_ADDRESS={manual_project_address}\n"
-    )
+    file.write(f"MANUAL_PROJECT_ADDRESS={manual_project_address}\n")
     file.write(f"CITY={city}\n")
     file.write(f"STATE={state}\n")
     file.write(f"ZIP_CODE={zip_code}\n\n")
@@ -382,10 +422,9 @@ with open(info_path, "w", encoding="utf-8") as file:
     file.write(f"CLIENT_EMAIL_1={client_email_1}\n")
     file.write(f"CLIENT_NAME_2={client_name_2}\n")
     file.write(f"CLIENT_EMAIL_2={client_email_2}\n\n")
-    file.write(
-        f"PROJECT_DESCRIPTION={project_description}\n\n"
-    )
+    file.write(f"PROJECT_DESCRIPTION={project_description}\n\n")
     file.write(f"CONTRACT_PDF={contract_pdf}\n")
+    file.write(f"MONDAY_UPLOADED=\n")
 
 print("INFO FILE CREATED")
 print(info_path)

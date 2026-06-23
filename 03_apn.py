@@ -98,7 +98,17 @@ sys.stdout.flush()
 
 # UI will show the APN dialog and return either
 # the confirmed/corrected APN or CANCELLED
-print(f"UI_CONFIRM_APN:{existing_apn}")
+contract_pdf = ""
+for line in info_lines:
+    if line.startswith("CONTRACT_PDF="):
+        contract_pdf = line.replace("CONTRACT_PDF=", "").strip()
+
+contract_pdf = ""
+for line in info_lines:
+    if line.startswith("CONTRACT_PDF="):
+        contract_pdf = line.replace("CONTRACT_PDF=", "").strip()
+
+print(f"UI_CONFIRM_APN:{existing_apn}|{contract_pdf}")
 sys.stdout.flush()
 
 response = sys.stdin.readline().strip()
