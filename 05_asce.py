@@ -20,16 +20,7 @@ base_folder = (
 # =========================
 
 project_number = sys.argv[1]
-
-# =========================
-# YEAR PREFIX
-# =========================
-
 year_prefix = project_number[:2]
-
-# =========================
-# YEAR FOLDER
-# =========================
 
 year_folder = os.path.join(
     base_folder,
@@ -40,215 +31,121 @@ year_folder = os.path.join(
 # FIND PROJECT
 # =========================
 
+print("UI_STEP:Reading INFO file")
+sys.stdout.flush()
+
 project_root = ""
 project_folder_name = ""
 
 for folder in os.listdir(year_folder):
-
     if folder.startswith(project_number):
-
-        project_root = os.path.join(
-            year_folder,
-            folder
-        )
-
+        project_root = os.path.join(year_folder, folder)
         project_folder_name = folder
-
         break
 
 if project_root == "":
-
-    raise Exception(
-        "PROJECT NOT FOUND"
-    )
+    raise Exception("PROJECT FOLDER NOT FOUND")
 
 # =========================
 # FIND NEWEST INFO FILE
 # =========================
 
 archive_folder = os.path.join(
-    project_root,
-    "CALCULATIONS",
-    "ARCHIVE"
+    project_root, "CALCULATIONS", "ARCHIVE"
 )
 
 info_path = ""
-
 latest_time = 0
 
 for file in os.listdir(archive_folder):
-
     upper_file = file.upper()
-
     if (
         file.endswith(".txt")
         and "INFO" in upper_file
         and project_number in upper_file
     ):
-
-        full_path = os.path.join(
-            archive_folder,
-            file
-        )
-
-        modified_time = os.path.getmtime(
-            full_path
-        )
-
+        full_path = os.path.join(archive_folder, file)
+        modified_time = os.path.getmtime(full_path)
         if modified_time > latest_time:
-
             latest_time = modified_time
-
             info_path = full_path
 
 if info_path == "":
+    raise Exception("INFO FILE NOT FOUND")
 
-    raise Exception(
-        "INFO FILE NOT FOUND"
-    )
-
-print("\nINFO FILE FOUND")
+print("INFO FILE FOUND")
 
 # =========================
 # READ INFO FILE
 # =========================
 
-with open(
-    info_path,
-    "r",
-    encoding="utf-8"
-) as file:
-
+with open(info_path, "r", encoding="utf-8") as file:
     info_lines = file.readlines()
-
-# =========================
-# VARIABLES
-# =========================
-
-project_name = ""
-project_address = ""
-
-city = ""
-state = ""
-zip_code = ""
-
-tot_status = ""
 
 # =========================
 # EXTRACT INFO
 # =========================
 
+project_name   = ""
+project_address = ""
+city           = ""
+state          = ""
+zip_code       = ""
+tot_status     = ""
+
 for line in info_lines:
-
     if line.startswith("PROJECT_NAME="):
-
-        project_name = (
-            line.replace(
-                "PROJECT_NAME=",
-                ""
-            ).strip()
-        )
-
+        project_name = line.replace(
+            "PROJECT_NAME=", ""
+        ).strip()
     if line.startswith("PROJECT_ADDRESS="):
-
-        project_address = (
-            line.replace(
-                "PROJECT_ADDRESS=",
-                ""
-            ).strip()
-        )
-
+        project_address = line.replace(
+            "PROJECT_ADDRESS=", ""
+        ).strip()
     if line.startswith("CITY="):
-
-        city = (
-            line.replace(
-                "CITY=",
-                ""
-            ).strip()
-        )
-
+        city = line.replace("CITY=", "").strip()
     if line.startswith("STATE="):
-
-        state = (
-            line.replace(
-                "STATE=",
-                ""
-            ).strip()
-        )
-
+        state = line.replace("STATE=", "").strip()
     if line.startswith("ZIP_CODE="):
-
-        zip_code = (
-            line.replace(
-                "ZIP_CODE=",
-                ""
-            ).strip()
-        )
-
+        zip_code = line.replace("ZIP_CODE=", "").strip()
     if line.startswith("TOT="):
-
-        tot_status = (
-            line.replace(
-                "TOT=",
-                ""
-            ).strip()
-        )
+        tot_status = line.replace("TOT=", "").strip()
 
 # =========================
 # STOP IF TOT
 # =========================
 
 if tot_status == "Y":
-
-    print("\n====================")
-    print("TOT PROJECT")
-    print("====================")
-
-    print(
-        "\nUSE TOT_ASCE.PY "
-        "INSTEAD"
-    )
-
+    print("TOT PROJECT — USE TOT_ASCE.PY INSTEAD")
     sys.exit()
 
 # =========================
-# CALCULATIONS FOLDER
+# FOLDERS
 # =========================
 
 calculations_folder = os.path.join(
-    project_root,
-    "CALCULATIONS"
+    project_root, "CALCULATIONS"
 )
 
 # =========================
 # TODAY DATE
 # =========================
 
-today_date = datetime.today().strftime(
-    "%m.%d.%y"
-)
-
-today_date = today_date.lstrip(
-    "0"
-).replace(
-    ".0",
-    "."
-)
+today_date = datetime.today().strftime("%m.%d.%y")
+today_date = today_date.lstrip("0").replace(".0", ".")
 
 # =========================
 # FINAL PDF NAME
 # =========================
 
 final_pdf_name = (
-    f"{project_number} "
-    f"{project_name}"
+    f"{project_number} {project_name}"
     f" - ASCEDesignHazardsReport"
     f" - {today_date}.pdf"
 )
 
 final_pdf_path = os.path.join(
-    calculations_folder,
-    final_pdf_name
+    calculations_folder, final_pdf_name
 )
 
 # =========================
@@ -256,171 +153,89 @@ final_pdf_path = os.path.join(
 # =========================
 
 def clean_address(text):
-
     text = text.lower()
-
     replacements = {
-        "street": "st",
-        "avenue": "ave",
-        "road": "rd",
-        "drive": "dr",
-        "lane": "ln",
-        "court": "ct",
-        "boulevard": "blvd",
-        "place": "pl",
-        "california": "ca",
-        "nevada": "nv"
+        "street": "st", "avenue": "ave",
+        "road": "rd", "drive": "dr",
+        "lane": "ln", "court": "ct",
+        "boulevard": "blvd", "place": "pl",
+        "california": "ca", "nevada": "nv"
     }
-
     for old, new in replacements.items():
-
-        text = text.replace(
-            old,
-            new
-        )
-
-    text = re.sub(
-        r"[^a-z0-9 ]",
-        "",
-        text
-    )
-
-    text = re.sub(
-        r"\s+",
-        " ",
-        text
-    ).strip()
-
+        text = text.replace(old, new)
+    text = re.sub(r"[^a-z0-9 ]", "", text)
+    text = re.sub(r"\s+", " ", text).strip()
     return text
 
 # =========================
 # PLAYWRIGHT
 # =========================
 
+print("UI_STEP:Opening ASCE website")
+sys.stdout.flush()
+
 with sync_playwright() as p:
 
-    browser = p.chromium.launch(
-        headless=False
-    )
-
-    context = browser.new_context(
-        accept_downloads=True
-    )
-
+    browser = p.chromium.launch(headless=False)
+    context = browser.new_context(accept_downloads=True)
     page = context.new_page()
-
-    # =========================
-    # OPEN WEBSITE
-    # =========================
 
     page.goto(
         "https://ascehazardtool.org/",
         timeout=120000
     )
 
-    print("\nWEBSITE OPENED")
-
-    # =========================
-    # WAIT
-    # =========================
-
+    print("WEBSITE OPENED")
     page.wait_for_timeout(3000)
 
-    # =========================
-    # CLOSE ASCE POPUP
-    # =========================
-
+    # Close ASCE popup
     try:
-
         page.locator(
-            "#welcomePopup > div.popup-header.blue.darken-3.welcome-header > span.details-popup-close-icon"
+            "#welcomePopup > div.popup-header.blue"
+            ".darken-3.welcome-header > "
+            "span.details-popup-close-icon"
         ).click(force=True)
-
-        print(
-            "\nASCE POPUP CLOSED"
-        )
-
+        print("ASCE POPUP CLOSED")
     except:
-
-        print(
-            "\nASCE POPUP NOT FOUND"
-        )
-
-    # =========================
-    # CLOSE COOKIE POPUP
-    # =========================
+        print("ASCE POPUP NOT FOUND")
 
     page.wait_for_timeout(1000)
 
+    # Close cookie popup
     try:
-
         page.locator(
             "button:has-text('Got it')"
         ).click(force=True)
-
-        print(
-            "\nCOOKIE POPUP CLOSED"
-        )
-
+        print("COOKIE POPUP CLOSED")
     except:
-
-        print(
-            "\nCOOKIE POPUP NOT FOUND"
-        )
+        print("COOKIE POPUP NOT FOUND")
 
     # =========================
-    # FULL SEARCH ADDRESS
+    # BUILD SEARCH ADDRESS
     # =========================
+
+    print("UI_STEP:Entering address")
+    sys.stdout.flush()
 
     search_address = project_address
-
-    if city != "":
-
+    if city:
         search_address += f", {city}"
-
-    if state != "":
-
+    if state:
         search_address += f", {state}"
-
-    if zip_code != "":
-
+    if zip_code:
         search_address += f" {zip_code}"
 
-    print("\nFULL SEARCH ADDRESS:")
-    print(search_address)
+    print(f"FULL SEARCH ADDRESS: {search_address}")
 
-    # =========================
-    # ADDRESS INPUT
-    # =========================
-
-    address_box = page.locator(
-        "#geocoder_input"
-    )
-
+    address_box = page.locator("#geocoder_input")
     address_box.click(force=True)
-
-    address_box.fill(
-        search_address
-    )
-
-    print("\nADDRESS ENTERED")
-
-    # =========================
-    # WAIT FOR DROPDOWN
-    # =========================
+    address_box.fill(search_address)
+    print("ADDRESS ENTERED")
 
     page.wait_for_timeout(3000)
 
-    # =========================
-    # TARGET ADDRESS
-    # =========================
-
-    target_compare = clean_address(
-        search_address
-    )
-
-    print("\nTARGET ADDRESS:")
-    print(target_compare)
+    target_compare = clean_address(search_address)
+    print(f"TARGET ADDRESS: {target_compare}")
 
     # =========================
     # KEYBOARD DROPDOWN SEARCH
@@ -429,272 +244,130 @@ with sync_playwright() as p:
     matched = False
 
     for i in range(8):
-
-        address_box.press(
-            "ArrowDown"
-        )
-
+        address_box.press("ArrowDown")
         page.wait_for_timeout(700)
 
-        current_value = (
-            address_box.input_value()
-        )
-
-        cleaned_result = clean_address(
-            current_value
-        )
+        current_value = address_box.input_value()
+        cleaned_result = clean_address(current_value)
 
         similarity = SequenceMatcher(
-            None,
-            target_compare,
-            cleaned_result
+            None, target_compare, cleaned_result
         ).ratio()
 
-        similarity_percent = round(
-            similarity * 100,
-            1
-        )
+        similarity_percent = round(similarity * 100, 1)
 
-        print("\n--------------------")
-        print(f"DROPDOWN OPTION {i + 1}")
-
-        print("\nRAW:")
-        print(current_value)
-
-        print("\nCLEANED:")
-        print(cleaned_result)
-
-        print(
-            f"\nMATCH: "
-            f"{similarity_percent}%"
-        )
-
-        # =========================
-        # MATCH FOUND
-        # =========================
+        print(f"DROPDOWN OPTION {i + 1}: {similarity_percent}% match")
 
         if similarity >= 0.90:
-
             matched = True
-
-            print(
-                "\nMATCH FOUND"
-            )
-
-            address_box.press(
-                "Enter"
-            )
-
-            print(
-                "\nMATCHING ADDRESS "
-                "SELECTED"
-            )
-
+            print("MATCH FOUND")
+            address_box.press("Enter")
+            print("MATCHING ADDRESS SELECTED")
             break
 
-    # =========================
-    # FAIL IF NO MATCH
-    # =========================
-
-    if matched == False:
-
-        print("\n====================")
-        print("ADDRESS MATCH FAILED")
-        print("====================")
-
+    if not matched:
         raise Exception(
-            "NO MATCHING ADDRESS FOUND "
-            "IN DROPDOWN"
+            "NO MATCHING ADDRESS FOUND IN DROPDOWN"
         )
 
-    # =========================
-    # WAIT FOR ADDRESS RESOLVE
-    # =========================
-
     page.wait_for_timeout(4000)
-
-    # =========================
-    # GET RESOLVED ADDRESS
-    # =========================
 
     resolved_text = page.locator(
         "#geocoder_input"
     ).input_value()
 
-    print("\nRESOLVED ADDRESS:")
-    print(resolved_text)
+    print(f"RESOLVED ADDRESS: {resolved_text}")
 
-    # =========================
-    # FINAL VALIDATION
-    # =========================
-
-    final_compare = clean_address(
-        resolved_text
-    )
-
+    final_compare = clean_address(resolved_text)
     final_similarity = SequenceMatcher(
-        None,
-        target_compare,
-        final_compare
+        None, target_compare, final_compare
     ).ratio()
+    final_percent = round(final_similarity * 100, 1)
 
-    final_percent = round(
-        final_similarity * 100,
-        1
-    )
-
-    print("\n====================")
-    print("FINAL ADDRESS VALIDATION")
-    print("====================")
-
-    print(
-        f"\nFINAL MATCH PERCENT: "
-        f"{final_percent}%"
-    )
+    print(f"FINAL MATCH: {final_percent}%")
 
     if final_similarity < 0.90:
-
-        raise Exception(
-            "FINAL ADDRESS VALIDATION FAILED"
-        )
+        raise Exception("FINAL ADDRESS VALIDATION FAILED")
 
     # =========================
-    # SELECT RISK CATEGORY II
+    # SELECT CRITERIA
     # =========================
+
+    print("UI_STEP:Selecting criteria")
+    sys.stdout.flush()
 
     page.locator(
         "#risk-level-selector"
     ).select_option("II")
-
-    print(
-        "\nRISK CATEGORY II SELECTED"
-    )
-
-    # =========================
-    # WAIT
-    # =========================
+    print("RISK CATEGORY II SELECTED")
 
     page.wait_for_timeout(1000)
 
-    # =========================
-    # CLICK SELECT ALL
-    # =========================
-
     page.locator(
-        "#criteria > div.criteria-container__content.white.margin--small > div:nth-child(4) > div.criteria-title-item > a"
+        "#criteria > div.criteria-container__content"
+        ".white.margin--small > div:nth-child(4) > "
+        "div.criteria-title-item > a"
     ).click(force=True)
-
-    print(
-        "\nSELECT ALL CLICKED"
-    )
-
-    # =========================
-    # WAIT
-    # =========================
+    print("SELECT ALL CLICKED")
 
     page.wait_for_timeout(1000)
 
-    # =========================
-    # CLICK VIEW RESULTS
-    # =========================
-
-    page.locator(
-        "text=View Results"
-    ).click(force=True)
-
-    print(
-        "\nVIEW RESULTS CLICKED"
-    )
+    page.locator("text=View Results").click(force=True)
+    print("VIEW RESULTS CLICKED")
 
     # =========================
-    # WAIT FOR RESULTS PAGE
+    # WAIT FOR RESULTS
     # =========================
 
-    print(
-        "\nWAITING FOR RESULTS PAGE..."
-    )
-
+    print("Waiting for results page...")
     page.wait_for_timeout(10000)
-
-    # =========================
-    # WAIT FOR FULL REPORT
-    # =========================
 
     page.wait_for_selector(
         "text=Full Report",
         timeout=240000
     )
-
-    print(
-        "\nFULL REPORT BUTTON FOUND"
-    )
+    print("FULL REPORT BUTTON FOUND")
 
     # =========================
-    # DOWNLOAD FULL REPORT
+    # DOWNLOAD REPORT
     # =========================
 
-    with page.expect_download(
-        timeout=240000
-    ) as download_info:
+    print("UI_STEP:Downloading report")
+    sys.stdout.flush()
 
+    with page.expect_download(timeout=240000) as download_info:
         page.get_by_text(
-            "Full Report",
-            exact=True
+            "Full Report", exact=True
         ).click(force=True)
 
     download = download_info.value
-
-    print(
-        "\nDOWNLOAD COMPLETE"
-    )
-
-    # =========================
-    # HANDLE EXISTING PDF
-    # =========================
-
-    base_name = os.path.splitext(
-        final_pdf_name
-    )[0]
-
-    extension = ".pdf"
-
-    counter = 2
-
-    new_final_pdf_path = (
-        final_pdf_path
-    )
-
-    while os.path.exists(
-        new_final_pdf_path
-    ):
-
-        new_final_pdf_path = (
-            os.path.join(
-                calculations_folder,
-                f"{base_name} "
-                f"({counter})"
-                f"{extension}"
-            )
-        )
-
-        counter += 1
+    print("DOWNLOAD COMPLETE")
 
     # =========================
     # SAVE PDF
     # =========================
 
-    download.save_as(
-        new_final_pdf_path
-    )
+    print("UI_STEP:Saving PDF")
+    sys.stdout.flush()
 
-    print("\nPDF SAVED")
+    base_name = os.path.splitext(final_pdf_name)[0]
+    extension = ".pdf"
+    counter   = 2
+    new_final_pdf_path = final_pdf_path
+
+    while os.path.exists(new_final_pdf_path):
+        new_final_pdf_path = os.path.join(
+            calculations_folder,
+            f"{base_name} ({counter}){extension}"
+        )
+        counter += 1
+
+    download.save_as(new_final_pdf_path)
+    print(f"PDF SAVED: {new_final_pdf_path}")
 
 # =========================
 # COMPLETE
 # =========================
 
-print("\n====================")
 print("ASCE COMPLETE")
-print("====================")
-
-print("\n\nDONE\n\n")
+print("DONE")
