@@ -1,0 +1,5 @@
+MONDAY_API_KEY = "eyJhbGciOiJIUzI1NiJ9.eyJ0aWQiOjY3NDA2OTUzNywiYWFpIjoxMSwidWlkIjo3Mzg0OTA2MSwiaWFkIjoiMjAyNi0wNi0yMlQyMzoyMToxMS43MTZaIiwicGVyIjoibWU6d3JpdGUiLCJhY3RpZCI6Mjg2ODM2NjAsInJnbiI6InVzZTEifQ.qml3Qkg8BjyllE_FsvhOh5Ilg4FtBevmonACR4lG2T0"
+
+BOARD_NAME = "Current Projects"
+
+FILES_COLUMN = "Files"
