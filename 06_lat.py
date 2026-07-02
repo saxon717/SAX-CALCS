@@ -140,8 +140,8 @@ if tot_status == "Y":
 # FINAL ADDRESS VALUES
 # =========================
 
-street_address   = project_address
-city_state_zip   = f"{city}, {state} {zip_code}"
+street_address       = project_address
+city_state_zip       = f"{city}, {state} {zip_code}"
 formatted_county_apn = ""
 
 if county != "" and verified_apn != "":
@@ -240,7 +240,7 @@ excel_path = new_final_excel_path
 # OPEN LAT FILE
 # =========================
 
-app = xw.App(visible=False)
+app = xw.App(visible=True)
 app.display_alerts = False
 
 wb       = app.books.open(os.path.abspath(excel_path))
@@ -258,12 +258,12 @@ with pdfplumber.open(pdf_path) as pdf:
     text = page.extract_text()
     lines = text.split("\n")
 
-ss_value        = ""
-sms_value       = ""
-sds_value       = ""
-s1_value        = ""
-sm1_value       = ""
-sd1_value       = ""
+ss_value         = ""
+sms_value        = ""
+sds_value        = ""
+s1_value         = ""
+sm1_value        = ""
+sd1_value        = ""
 seismic_category = ""
 
 for i, line in enumerate(lines):
@@ -361,7 +361,11 @@ wb.app.api.ActiveWindow.ScrollColumn = 1
 wb.save()
 print("LAT COMPLETE")
 
-wb.close()
-app.quit()
+# =========================
+# EMIT PATH — do NOT close, VERT will handle both
+# =========================
+
+print(f"UI_XL_PATH:{excel_path}")
+sys.stdout.flush()
 
 print("DONE")

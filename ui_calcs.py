@@ -3,14 +3,16 @@ import sys
 import subprocess
 import threading
 import queue
+import json
 
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout,
     QHBoxLayout, QLabel, QLineEdit, QPushButton,
-    QTextEdit, QProgressBar, QDialog, QFrame
+    QTextEdit, QProgressBar, QDialog, QFrame,
+    QCompleter, QSplashScreen
 )
-from PySide6.QtCore import Qt, Signal, QObject, QTimer
-from PySide6.QtGui import QFont, QIntValidator
+from PySide6.QtCore import Qt, Signal, QObject, QTimer, QStringListModel
+from PySide6.QtGui import QFont, QIntValidator, QPixmap, QColor
 
 # =========================
 # COLORS
@@ -207,9 +209,93 @@ class Signals(QObject):
     req_addr_mismatch = Signal(str, str)
     req_monday_mismatch = Signal(str, str)
     req_info_exists   = Signal(str)
-    req_upload_confirm = Signal(str)   # file already on Monday — ask to re-upload
+    req_upload_confirm  = Signal(str)   # file already on Monday — ask to re-upload
+    req_xl_complete     = Signal(str)   # XL files done — pipe-delimited paths
+    req_tot_manual      = Signal(str)   # TOT inconclusive or unmatched — manual Y/N
+
 
 signals = Signals()
+
+# =========================
+# PROJECT CACHE
+# =========================
+
+CACHE_FILE = os.path.join(script_folder, "project_cache.json")
+
+def scan_all_projects(progress_cb=None):
+    """Scan all year folders and return list of (number, name, path) tuples."""
+    projects = []
+    if not os.path.exists(base_folder):
+        return projects
+    try:
+        year_folders = [
+            d for d in os.listdir(base_folder)
+            if os.path.isdir(os.path.join(base_folder, d))
+            and d.endswith("-XXX")
+        ]
+    except Exception:
+        return projects
+
+    for i, yf in enumerate(sorted(year_folders)):
+        yf_path = os.path.join(base_folder, yf)
+        try:
+            for folder in sorted(os.listdir(yf_path)):
+                full = os.path.join(yf_path, folder)
+                if not os.path.isdir(full):
+                    continue
+                # Project folders start with XX-XXX pattern
+                parts = folder.split(" ", 1)
+                if len(parts) >= 1 and "-" in parts[0]:
+                    number = parts[0].strip()
+                    name   = parts[1].strip() if len(parts) > 1 else ""
+                    projects.append({
+                        "number": number,
+                        "name":   name,
+                        "path":   full,
+                        "folder": folder,
+                    })
+        except Exception:
+            pass
+        if progress_cb:
+            progress_cb(i + 1, len(year_folders))
+
+    return projects
+
+
+def load_cache():
+    """Load cached project list from disk."""
+    if not os.path.exists(CACHE_FILE):
+        return []
+    try:
+        with open(CACHE_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return []
+
+
+def save_cache(projects):
+    """Save project list to disk cache."""
+    try:
+        with open(CACHE_FILE, "w", encoding="utf-8") as f:
+            json.dump(projects, f, indent=2)
+    except Exception:
+        pass
+
+
+def refresh_cache(progress_cb=None):
+    """
+    Load existing cache, scan for new folders not already in it,
+    append them, save and return full list.
+    """
+    existing   = load_cache()
+    known_paths = {p["path"] for p in existing}
+    fresh       = scan_all_projects(progress_cb)
+    new_entries = [p for p in fresh if p["path"] not in known_paths]
+    combined    = existing + new_entries
+    if new_entries:
+        save_cache(combined)
+    return combined
+
 
 # =========================
 # HELPERS
@@ -248,6 +334,71 @@ def get_info_data(project_root, project_number):
                 key, _, val = line.partition("=")
                 data[key.strip()] = val.strip()
     return data
+
+# =========================
+# SPLASH SCREEN
+# =========================
+
+class SAXSplash(QWidget):
+    done = Signal(list)   # emits project list when scan complete
+
+    def __init__(self):
+        super().__init__()
+        self.setWindowFlags(Qt.SplashScreen | Qt.FramelessWindowHint)
+        self.setFixedSize(420, 200)
+        self.setStyleSheet(
+            f"background-color:{BG};border:1px solid {BORDER};border-radius:10px;"
+        )
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(32, 28, 32, 28)
+        layout.setSpacing(12)
+
+        title = QLabel("SAX")
+        title.setFont(QFont("Arial", 28, QFont.Bold))
+        title.setStyleSheet(f"color:{BLUE};background:transparent;border:none;")
+        title.setAlignment(Qt.AlignCenter)
+        layout.addWidget(title)
+
+        self.status = QLabel("Loading projects...")
+        self.status.setFont(QFont("Arial", 10))
+        self.status.setStyleSheet(f"color:{SUBTEXT};background:transparent;border:none;")
+        self.status.setAlignment(Qt.AlignCenter)
+        layout.addWidget(self.status)
+
+        self.bar = QProgressBar()
+        self.bar.setRange(0, 100)
+        self.bar.setValue(0)
+        self.bar.setTextVisible(False)
+        self.bar.setFixedHeight(6)
+        self.bar.setStyleSheet(
+            f"QProgressBar{{background:{BTN_DEFAULT};border-radius:3px;border:none;}}"
+            f"QProgressBar::chunk{{background:{BLUE};border-radius:3px;}}"
+        )
+        layout.addWidget(self.bar)
+
+        # Center on screen
+        screen = QApplication.primaryScreen().availableGeometry()
+        self.move(
+            (screen.width()  - self.width())  // 2,
+            (screen.height() - self.height()) // 2,
+        )
+
+    def start(self):
+        def worker():
+            def progress(current, total):
+                pct = int((current / total) * 100) if total else 0
+                # Use QTimer to update UI safely from thread
+                QTimer.singleShot(0, lambda: self._update(pct))
+            projects = refresh_cache(progress_cb=progress)
+            QTimer.singleShot(0, lambda: self.done.emit(projects))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _update(self, pct):
+        self.bar.setValue(pct)
+        self.status.setText(f"Scanning projects... {pct}%")
+
 
 # =========================
 # APN WIDGET
@@ -459,9 +610,6 @@ class InfoExistsDialog(SAXDialog):
             )
         )
         self.main_layout.addWidget(
-            self._body_label("Overwrite will replace the OLDEST file.")
-        )
-        self.main_layout.addWidget(
             self._body_label("What would you like to do?")
         )
         for f in files:
@@ -488,9 +636,9 @@ class InfoExistsDialog(SAXDialog):
         new_btn.setStyleSheet(DIALOG_BTN_GREEN)
         new_btn.clicked.connect(self.accept)
         new_btn.setDefault(True)
+        row.addWidget(skip_btn)
         row.addWidget(overwrite_btn)
         row.addWidget(new_btn)
-        row.addWidget(skip_btn)
         self.main_layout.addLayout(row)
 
 
@@ -754,6 +902,103 @@ class DependencyDialog(SAXDialog):
 
 
 # =========================
+# TOT MANUAL DIALOG
+# =========================
+
+class TOTManualDialog(SAXDialog):
+    def __init__(self, parent, message):
+        super().__init__(parent, "TOT Manual Override")
+        self.main_layout.addWidget(
+            self._title_label("Manual Override Required")
+        )
+        self.main_layout.addWidget(
+            self._body_label(message)
+        )
+        self.main_layout.addWidget(
+            self._body_label("Is this a TOT project?")
+        )
+        row = QHBoxLayout()
+        row.setSpacing(10)
+        row.addStretch()
+        no_btn = QPushButton("No — Not TOT")
+        no_btn.setStyleSheet(DIALOG_BTN_BLUE)
+        no_btn.clicked.connect(self.reject)
+        yes_btn = QPushButton("Yes — TOT Project")
+        yes_btn.setStyleSheet(DIALOG_BTN_GREEN)
+        yes_btn.clicked.connect(self.accept)
+        yes_btn.setDefault(True)
+        row.addWidget(no_btn)
+        row.addWidget(yes_btn)
+        self.main_layout.addLayout(row)
+
+
+# =========================
+# XL COMPLETE DIALOG
+# =========================
+
+class XLCompleteDialog(SAXDialog):
+    def __init__(self, parent, paths):
+        super().__init__(parent, "XL Files Created")
+        self.paths      = paths        # list of file paths
+        self.keep_open  = []           # paths user wants to keep open
+
+        self.main_layout.addWidget(
+            self._title_label("XL files created successfully.")
+        )
+        self.main_layout.addWidget(
+            self._body_label("Leave open for review?")
+        )
+
+        self.checkboxes = []
+        for path in paths:
+            cb = __import__('PySide6.QtWidgets', fromlist=['QCheckBox']).QCheckBox(
+                os.path.basename(path)
+            )
+            cb.setStyleSheet(
+                f"QCheckBox{{color:{TEXT};font-family:Arial;font-size:12px;}}"
+                f"QCheckBox::indicator{{width:16px;height:16px;}}"
+                f"QCheckBox::indicator:unchecked{{border:1px solid {BORDER};"
+                f"border-radius:3px;background:{BTN_DEFAULT};}}"
+                f"QCheckBox::indicator:checked{{border:1px solid {GREEN};"
+                f"border-radius:3px;background:{GREEN};}}"
+            )
+            cb.setChecked(True)
+            cb.stateChanged.connect(self._update_yes_btn)
+            self.main_layout.addWidget(cb)
+            self.checkboxes.append(cb)
+
+        row = QHBoxLayout()
+        row.setSpacing(10)
+        row.addStretch()
+
+        self.no_btn = QPushButton("No — Close")
+        self.no_btn.setStyleSheet(DIALOG_BTN_RED)
+        self.no_btn.clicked.connect(self.reject)
+
+        self.yes_btn = QPushButton("Yes — Leave Open")
+        self.yes_btn.setStyleSheet(DIALOG_BTN_GREEN)
+        self.yes_btn.clicked.connect(self._confirm)
+        self.yes_btn.setDefault(True)
+
+        row.addWidget(self.no_btn)
+        row.addWidget(self.yes_btn)
+        self.main_layout.addLayout(row)
+        self._update_yes_btn()
+
+    def _update_yes_btn(self):
+        any_checked = any(cb.isChecked() for cb in self.checkboxes)
+        self.yes_btn.setEnabled(any_checked)
+
+    def _confirm(self):
+        self.keep_open = [
+            self.paths[i]
+            for i, cb in enumerate(self.checkboxes)
+            if cb.isChecked()
+        ]
+        self.accept()
+
+
+# =========================
 # SPLIT BUTTON
 # =========================
 
@@ -864,6 +1109,7 @@ class ScriptRunner(QObject):
         self._proc         = None
         self._stopped      = False
         self._result_queue = queue.Queue()
+        self._xl_paths     = []
 
     def stop(self):
         self._stopped = True
@@ -1006,6 +1252,17 @@ class ScriptRunner(QObject):
                 self._proc.stdin.flush()
                 continue
 
+            # ── TOT MANUAL OVERRIDE (inconclusive or unmatched search) ──
+            if line.startswith("UI_TOT_MANUAL:"):
+                msg = line.replace("UI_TOT_MANUAL:", "").strip()
+                signals.req_tot_manual.emit(msg)
+                result = self._wait_for_result(key, timeout=300)
+                if result is None:
+                    return False
+                self._proc.stdin.write(result + "\n")
+                self._proc.stdin.flush()
+                continue
+
             # ── UPLOAD AUTO — file not on Monday, upload immediately ──
             if line.startswith("UI_UPLOAD_AUTO:"):
                 filename = line.replace("UI_UPLOAD_AUTO:", "").strip()
@@ -1042,6 +1299,13 @@ class ScriptRunner(QObject):
                 self._proc.stdin.flush()
                 continue
 
+            # ── XL FILE PATH (collect, show popup after stage done) ──
+            if line.startswith("UI_XL_PATH:"):
+                path = line.replace("UI_XL_PATH:", "").strip()
+                self._xl_paths.append(path)
+                signals.log.emit(f"  ▸ XL created: {os.path.basename(path)}")
+                continue
+
             # ── REGULAR LOG LINE ──
             signals.log.emit(line)
 
@@ -1053,6 +1317,18 @@ class ScriptRunner(QObject):
             return False
 
         success = self._proc.returncode == 0
+
+        # If XL files were created, show popup and send response
+        # BEFORE emitting stage_done (subprocess still waiting on stdin)
+        if self._xl_paths:
+            paths_str = "|".join(self._xl_paths)
+            self._xl_paths = []
+            signals.req_xl_complete.emit(paths_str)
+            result = self._wait_for_result(key, timeout=300)
+            if self._proc.poll() is None:
+                self._proc.stdin.write((result or "CLOSE") + "\n")
+                self._proc.stdin.flush()
+
         signals.stage_done.emit(key, success)
         return success
 
@@ -1083,6 +1359,7 @@ class SAXWindow(QMainWindow):
         self.project_number   = ""
         self.tot_status       = ""
         self.running          = False
+        self._project_cache   = {}
         self.stage_buttons    = {}
         self.active_stages    = list(DEFAULT_STAGES)
         self.completed_stages = set()
@@ -1108,6 +1385,8 @@ class SAXWindow(QMainWindow):
         signals.req_monday_mismatch.connect(self.handle_monday_mismatch)
         signals.req_info_exists.connect(self.handle_info_exists)
         signals.req_upload_confirm.connect(self.handle_upload_confirm)
+        signals.req_xl_complete.connect(self.handle_xl_complete)
+        signals.req_tot_manual.connect(self.handle_tot_manual)
 
         self._build_ui()
         self._build_stage_buttons(DEFAULT_STAGES, enabled=False)
@@ -1157,6 +1436,12 @@ class SAXWindow(QMainWindow):
         else:
             runner.put_result("CONFIRMED")
 
+    def handle_tot_manual(self, message):
+        dlg = TOTManualDialog(self, message)
+        runner.put_result(
+            "Y" if dlg.exec() == QDialog.Accepted else "N"
+        )
+
     def handle_addr_mismatch(self, info_addr, found_addr):
         dlg = AddressMismatchDialog(self, info_addr, found_addr)
         runner.put_result(
@@ -1179,6 +1464,20 @@ class SAXWindow(QMainWindow):
             runner.put_result("OVERWRITE")
         else:
             runner.put_result("NEW")
+
+    def handle_xl_complete(self, paths_str):
+        paths  = [p for p in paths_str.split("|") if p.strip()]
+        dlg    = XLCompleteDialog(self, paths)
+        result = dlg.exec()
+        if result == QDialog.Accepted:
+            self.append_log(
+                f"XL files left open: "
+                f"{', '.join(os.path.basename(p) for p in dlg.keep_open)}"
+            )
+            runner.put_result("KEEP")
+        else:
+            self.append_log("XL files closed.")
+            runner.put_result("CLOSE")
 
     def handle_upload_confirm(self, contract_name):
         """File already on Monday — ask whether to re-upload."""
@@ -1222,9 +1521,9 @@ class SAXWindow(QMainWindow):
         ll.addWidget(subtitle)
         ll.addSpacing(14)
 
-        self._slabel(ll, "PROJECT NUMBER")
+        self._slabel(ll, "PROJECT")
         self.project_input = QLineEdit()
-        self.project_input.setPlaceholderText("e.g. 26-035")
+        self.project_input.setPlaceholderText("Type to search projects...")
         self.project_input.setStyleSheet(
             f"QLineEdit{{background-color:{BG};color:{TEXT};"
             f"border:1px solid {BORDER};border-radius:6px;"
@@ -1232,6 +1531,19 @@ class SAXWindow(QMainWindow):
             f"QLineEdit:focus{{border-color:{BLUE};}}"
         )
         self.project_input.returnPressed.connect(self.load_project)
+        self._completer_model = QStringListModel()
+        self._completer = QCompleter()
+        self._completer.setModel(self._completer_model)
+        self._completer.setCaseSensitivity(Qt.CaseInsensitive)
+        self._completer.setFilterMode(Qt.MatchContains)
+        self._completer.setCompletionMode(QCompleter.PopupCompletion)
+        self._completer.popup().setStyleSheet(
+            f"QListView{{background:{PANEL};color:{TEXT};border:1px solid {BORDER};"
+            f"font-family:Arial;font-size:12px;padding:4px;}}"
+            f"QListView::item:selected{{background:{BLUE};color:white;}}"
+        )
+        self._completer.activated.connect(self._on_project_selected)
+        self.project_input.setCompleter(self._completer)
         ll.addWidget(self.project_input)
 
         self.project_name_label = QLabel("")
@@ -1247,7 +1559,7 @@ class SAXWindow(QMainWindow):
         self.tot_badge.setStyleSheet(f"color:{SUBTEXT};")
         ll.addWidget(self.tot_badge)
 
-        self.load_btn = QPushButton("Load Project")
+        self.load_btn = QPushButton("Select Project")
         self.load_btn.setStyleSheet(
             f"QPushButton{{background-color:{BTN_DEFAULT};color:{TEXT};"
             f"border:1px solid {BORDER};border-radius:6px;padding:8px;"
@@ -1445,6 +1757,25 @@ class SAXWindow(QMainWindow):
     # =========================
     # LOAD PROJECT
     # =========================
+
+    def populate_projects(self, projects):
+        """Called after splash scan — loads projects into completer."""
+        self._project_cache = {
+            p["number"]: p for p in projects
+        }
+        # Build display strings: "26-035 — Project Name"
+        display = [
+            f"{p['number']} — {p['name']}" if p['name'] else p['number']
+            for p in sorted(projects, key=lambda x: x['number'], reverse=True)
+        ]
+        self._completer_model.setStringList(display)
+        self.append_log(f"  ▸ {len(projects)} projects loaded")
+
+    def _on_project_selected(self, text):
+        """User picked a project from the dropdown."""
+        # Extract just the number from "26-035 — Name"
+        number = text.split(" — ")[0].strip()
+        self.project_input.setText(number)
 
     def load_project(self):
         pn = self.project_input.text().strip()
@@ -1766,6 +2097,19 @@ class SAXWindow(QMainWindow):
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
+
     window = SAXWindow()
-    window.show()
+
+    splash = SAXSplash()
+    splash.show()
+    app.processEvents()
+
+    def on_scan_done(projects):
+        window.populate_projects(projects)
+        splash.close()
+        window.show()
+
+    splash.done.connect(on_scan_done)
+    splash.start()
+
     sys.exit(app.exec())

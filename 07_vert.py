@@ -7,21 +7,25 @@ from datetime import datetime
 import pdfplumber
 import xlwings as xw
 
+from config import (
+    BASE_FOLDER,
+    UI_SUBFOLDER,
+    CONTRACT_SUBFOLDER,
+    YEAR_FOLDER_SUFFIX,
+    TEMPLATE_FOLDER,
+    VERT_TEMPLATE_NAME,
+)
+
+
 # =========================
 # PROJECT NUMBER
 # =========================
 
 project_number = sys.argv[1]
 year_prefix = project_number[:2]
-
-base_folder = (
-    r"C:\Users\saxon\Dropbox\SHEAR FORCE"
-    r"\1) CURRENT PROJECTS"
-)
-
-year_group_folder = os.path.join(
-    base_folder,
-    f"{year_prefix}-XXX"
+year_folder = os.path.join(
+    BASE_FOLDER,
+    f"{year_prefix}{YEAR_FOLDER_SUFFIX}"
 )
 
 # =========================
@@ -34,10 +38,10 @@ sys.stdout.flush()
 project_root = ""
 project_folder_name = ""
 
-for folder in os.listdir(year_group_folder):
+for folder in os.listdir(year_folder):
     if folder.startswith(project_number):
         project_root = os.path.join(
-            year_group_folder, folder
+            year_folder, folder
         )
         project_folder_name = folder
         break
@@ -60,11 +64,8 @@ project_name_only = (
 calculations_folder = os.path.join(
     project_root, "CALCULATIONS"
 )
-
-archive_folder = os.path.join(
-    calculations_folder, "ARCHIVE"
-)
-
+ui_folder = os.path.join(project_root, UI_SUBFOLDER)
+os.makedirs(ui_folder, exist_ok=True)
 # =========================
 # FIND NEWEST INFO FILE
 # =========================
@@ -72,14 +73,14 @@ archive_folder = os.path.join(
 info_path = ""
 latest_time = 0
 
-for file in os.listdir(archive_folder):
+for file in os.listdir(ui_folder):
     upper_file = file.upper()
     if (
         file.endswith(".txt")
         and "INFO" in upper_file
         and project_number in upper_file
     ):
-        full_path = os.path.join(archive_folder, file)
+        full_path = os.path.join(ui_folder, file)
         modified_time = os.path.getmtime(full_path)
         if modified_time > latest_time:
             latest_time = modified_time
@@ -113,18 +114,14 @@ for line in info_lines:
 # FIND VERT TEMPLATE
 # =========================
 
-template_folder = (
-    r"C:\Users\saxon\Dropbox\SHEAR FORCE"
-    r"\4) TEMPLATES"
-    r"\CALC EXCEL TEMPLATES"
-)
+template_folder = TEMPLATE_FOLDER
 
 template_path = ""
 
 for file in os.listdir(template_folder):
     if (
         file.endswith(".xlsm")
-        and "SF Vertical Package Template" in file
+        and VERT_TEMPLATE_NAME in file
     ):
         template_path = os.path.join(
             template_folder, file
@@ -186,7 +183,7 @@ print(f"VERT TEMPLATE COPIED: {vert_path}")
 print("UI_STEP:Finding LAT file")
 sys.stdout.flush()
 
-lat_path = ""
+lat_path  = ""
 lat_files = []
 
 for file in os.listdir(calculations_folder):
@@ -215,7 +212,7 @@ print(f"LAT FILE FOUND: {lat_path}")
 # FIND ASCE PDF
 # =========================
 
-asce_pdf = ""
+asce_pdf  = ""
 pdf_files = []
 
 for file in os.listdir(calculations_folder):
@@ -264,7 +261,7 @@ sys.stdout.flush()
 snow_load = ""
 
 with pdfplumber.open(asce_pdf) as pdf:
-    page_5 = pdf.pages[4]
+    page_5    = pdf.pages[4]
     page_text = page_5.extract_text()
 
 snow_match = re.search(
@@ -279,37 +276,31 @@ if snow_match:
 print(f"SNOW LOAD: {snow_load}")
 
 # =========================
-# OPEN EXCEL
+# OPEN BOTH FILES SIDE BY SIDE
+# LAT stays open — snow load written back after VERT done
 # =========================
 
-app = xw.App(visible=False)
+app = xw.App(visible=True)
 app.display_alerts = False
 
 try:
     lat_wb  = app.books.open(os.path.abspath(lat_path))
     vert_wb = app.books.open(os.path.abspath(vert_path))
 
-    lat_sheet_1  = lat_wb.sheets[0]
+    lat_cover_ws = lat_wb.sheets[0]
     vert_sheet_1 = vert_wb.sheets[0]
     vert_sheet_2 = vert_wb.sheets[1]
     vert_sheet_3 = vert_wb.sheets[2]
 
-    # Copy cover info from LAT
-    vert_sheet_1.range("A10").value = (
-        lat_sheet_1.range("A10").value
-    )
-    vert_sheet_1.range("A11").value = (
-        lat_sheet_1.range("A11").value
-    )
-    vert_sheet_1.range("A12").value = (
-        lat_sheet_1.range("A12").value
-    )
-    vert_sheet_1.range("A13").value = (
-        lat_sheet_1.range("A13").value
-    )
-    vert_sheet_1.range("D37").value = (
-        lat_sheet_1.range("D35").value
-    )
+    # =========================
+    # COPY COVER FROM LAT TO VERT
+    # =========================
+
+    vert_sheet_1.range("A10").value = lat_cover_ws.range("A10").value
+    vert_sheet_1.range("A11").value = lat_cover_ws.range("A11").value
+    vert_sheet_1.range("A12").value = lat_cover_ws.range("A12").value
+    vert_sheet_1.range("A13").value = lat_cover_ws.range("A13").value
+    vert_sheet_1.range("D37").value = lat_cover_ws.range("D35").value
 
     print("LAT COVER DATA COPIED")
 
@@ -321,16 +312,12 @@ try:
 
     for shape in vert_sheet_2.api.Shapes:
         try:
-            shape_text = (
-                shape.TextFrame.Characters().Text
-            )
+            shape_text = shape.TextFrame.Characters().Text
             if good_description and (
                 "PROJECT DESCRIPTION" in shape_text.upper()
                 or len(shape_text.strip()) > 20
             ):
-                shape.TextFrame.Characters().Text = (
-                    project_description
-                )
+                shape.TextFrame.Characters().Text = project_description
                 textbox_updated = True
                 print("TEXTBOX UPDATED")
                 break
@@ -341,7 +328,7 @@ try:
         raise Exception("TEXTBOX NOT FOUND")
 
     # =========================
-    # WRITE SNOW LOAD
+    # WRITE SNOW LOAD TO VERT
     # =========================
 
     print("UI_STEP:Writing snow load")
@@ -349,24 +336,62 @@ try:
 
     if snow_load != "":
         vert_sheet_3.range("F17").value = snow_load
-        print("SNOW LOAD WRITTEN")
+        print("SNOW LOAD WRITTEN TO VERT")
 
-    # Navigate to first sheet
+    # =========================
+    # READ ROOF SNOW LOAD FROM VERT Criteria!D48
+    # WRITE BACK TO LAT W!B6
+    # =========================
+
+    print("Writing roof snow load back to LAT...")
+    sys.stdout.flush()
+
+    try:
+        criteria_ws      = vert_wb.sheets["Criteria"]
+        roof_snow_load   = criteria_ws.range("D48").value
+        lat_w_ws         = lat_wb.sheets["W"]
+        lat_w_ws.range("B6").value = roof_snow_load
+        print(f"ROOF SNOW LOAD → LAT W!B6: {roof_snow_load}")
+    except Exception as e:
+        print(f"WARNING: Could not write snow load to LAT: {e}")
+
+    # =========================
+    # NAVIGATE + SAVE BOTH
+    # =========================
+
     vert_sheet_1.activate()
     vert_wb.app.api.ActiveWindow.ScrollRow    = 1
     vert_wb.app.api.ActiveWindow.ScrollColumn = 1
-
-    # =========================
-    # SAVE
-    # =========================
 
     print("UI_STEP:Saving Excel")
     sys.stdout.flush()
 
     vert_wb.save()
-    print(f"VERT COMPLETE: {vert_path}")
+    lat_wb.save()
+    print(f"VERT SAVED: {vert_path}")
+    print(f"LAT SAVED: {lat_path}")
 
-finally:
+    # =========================
+    # WAIT FOR UI RESPONSE — keep open or close
+    # =========================
+
+    print(f"UI_XL_PATH:{lat_path}")
+    print(f"UI_XL_PATH:{vert_path}")
+    sys.stdout.flush()
+
+    # Runner will emit req_xl_complete and wait for result
+    response = sys.stdin.readline().strip()
+
+    if response == "CLOSE":
+        lat_wb.close()
+        vert_wb.close()
+        app.quit()
+        print("XL FILES CLOSED")
+    else:
+        # KEEP — leave open, just detach xlwings
+        print("XL FILES LEFT OPEN FOR REVIEW")
+
+except Exception as e:
     try:
         lat_wb.close()
     except:
@@ -376,5 +401,7 @@ finally:
     except:
         pass
     app.quit()
+    raise e
 
+print("VERT COMPLETE")
 print("DONE")

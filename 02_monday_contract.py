@@ -4,6 +4,14 @@ import mimetypes
 import requests
 
 from monday_config import (
+
+from config import (
+    BASE_FOLDER,
+    UI_SUBFOLDER,
+    CONTRACT_SUBFOLDER,
+    YEAR_FOLDER_SUFFIX,
+)
+
     MONDAY_API_KEY,
     BOARD_NAME,
     FILES_COLUMN
@@ -16,15 +24,9 @@ HEADERS = {
     "Authorization": MONDAY_API_KEY,
     "API-Version": "2023-10"
 }
-
-base_folder = (
-    r"C:\Users\saxon\Dropbox\SHEAR FORCE"
-    r"\1) CURRENT PROJECTS"
-)
-
 project_number = sys.argv[1]
 year_prefix    = project_number[:2]
-year_folder    = os.path.join(base_folder, f"{year_prefix}-XXX")
+year_folder    = os.path.join(BASE_FOLDER, f"{year_prefix}{YEAR_FOLDER_SUFFIX}")
 
 if not os.path.exists(year_folder):
     raise Exception(f"YEAR FOLDER NOT FOUND: {year_folder}")
@@ -45,12 +47,13 @@ if not project_root:
 # INFO FILE HELPERS
 # =========================
 
-archive_folder = os.path.join(project_root, "CALCULATIONS", "ARCHIVE")
+ui_folder = os.path.join(project_root, "UI")
+os.makedirs(ui_folder, exist_ok=True)
 
 info_files = sorted(
     [
-        os.path.join(archive_folder, f)
-        for f in os.listdir(archive_folder)
+        os.path.join(ui_folder, f)
+        for f in os.listdir(ui_folder)
         if f.endswith(".txt")
         and "INFO" in f.upper()
         and project_number in f.upper()
@@ -92,7 +95,6 @@ def write_monday_uploaded(value):
 
 # =========================
 # FIND CONTRACT PDF
-# (done first so we always have the filename for popups)
 # =========================
 
 print("UI_STEP:Finding contract PDF")
@@ -130,14 +132,11 @@ sys.stdout.flush()
 
 # =========================
 # CHECK INFO FILE
-# If already marked uploaded, ask once here.
-# If user confirms, skip the Monday assets check and go straight to upload.
-# If user skips, exit now.
 # =========================
 
 info_data        = read_info()
 monday_uploaded  = info_data.get("MONDAY_UPLOADED", "").strip()
-user_confirmed   = False  # True if user already said yes to re-upload
+user_confirmed   = False
 
 if monday_uploaded == "Y":
     print(f"UI_UPLOAD_CONFIRM:{contract_file_name}")
@@ -147,7 +146,6 @@ if monday_uploaded == "Y":
         print("MONDAY UPLOAD SKIPPED — already marked as uploaded")
         print("DONE")
         sys.exit(0)
-    # User said yes — mark confirmed, skip the second Monday check later
     user_confirmed = True
     print("Re-upload confirmed — connecting to Monday...")
     sys.stdout.flush()
@@ -169,16 +167,8 @@ def monday_query(query, variables=None):
         raise Exception(f"MONDAY GRAPHQL ERROR: {data['errors']}")
     return data["data"]
 
-# =========================
-# CONNECT TO MONDAY
-# =========================
-
 print("UI_STEP:Connecting to Monday")
 sys.stdout.flush()
-
-# =========================
-# FIND BOARD
-# =========================
 
 print("UI_STEP:Finding board")
 sys.stdout.flush()
@@ -210,10 +200,6 @@ if not files_column_id:
 
 print("MONDAY BOARD FOUND")
 sys.stdout.flush()
-
-# =========================
-# FIND ITEM
-# =========================
 
 print("UI_STEP:Finding project item")
 sys.stdout.flush()
@@ -277,11 +263,9 @@ sys.stdout.flush()
 
 # =========================
 # CHECK IF FILE ALREADY ON MONDAY
-# Skipped entirely if user already confirmed re-upload above.
 # =========================
 
 if user_confirmed:
-    # Already got the green light — go straight to upload
     print("Skipping Monday assets check — re-upload already confirmed")
     print("Re-uploading contract to Monday...")
     sys.stdout.flush()
@@ -293,9 +277,7 @@ else:
     check_data = monday_query(f"""
     query {{
       items(ids: [{item_id}]) {{
-        assets {{
-          name
-        }}
+        assets {{ name }}
       }}
     }}
     """)
@@ -313,7 +295,6 @@ else:
     )
 
     if already_on_monday:
-        # File found on Monday — ask user whether to re-upload
         print(f"UI_UPLOAD_CONFIRM:{contract_file_name}")
         sys.stdout.flush()
         user_response = sys.stdin.readline().strip()
@@ -327,12 +308,11 @@ else:
         sys.stdout.flush()
 
     else:
-        # File not on Monday — auto-upload, no dialog
         print("UI_STEP:Uploading file")
         sys.stdout.flush()
         print(f"UI_UPLOAD_AUTO:{contract_file_name}")
         sys.stdout.flush()
-        sys.stdin.readline()  # wait for UI acknowledgement
+        sys.stdin.readline()
         print("Uploading contract to Monday...")
         sys.stdout.flush()
 
@@ -357,9 +337,7 @@ with open(contract_pdf, "rb") as file_handle:
         MONDAY_FILE_URL,
         headers={"Authorization": MONDAY_API_KEY},
         data={"query": upload_query},
-        files={
-            "variables[file]": (contract_file_name, file_handle, mime_type)
-        }
+        files={"variables[file]": (contract_file_name, file_handle, mime_type)}
     )
 
 print(f"STATUS CODE: {upload_response.status_code}")
