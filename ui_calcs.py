@@ -207,7 +207,7 @@ class Signals(QObject):
     req_addr_mismatch = Signal(str, str)
     req_monday_mismatch = Signal(str, str)
     req_info_exists   = Signal(str)
-    req_upload_confirm = Signal(str)
+    req_upload_confirm = Signal(str)   # file already on Monday — ask to re-upload
 
 signals = Signals()
 
@@ -459,6 +459,9 @@ class InfoExistsDialog(SAXDialog):
             )
         )
         self.main_layout.addWidget(
+            self._body_label("Overwrite will replace the OLDEST file.")
+        )
+        self.main_layout.addWidget(
             self._body_label("What would you like to do?")
         )
         for f in files:
@@ -485,9 +488,9 @@ class InfoExistsDialog(SAXDialog):
         new_btn.setStyleSheet(DIALOG_BTN_GREEN)
         new_btn.clicked.connect(self.accept)
         new_btn.setDefault(True)
-        row.addWidget(skip_btn)
         row.addWidget(overwrite_btn)
         row.addWidget(new_btn)
+        row.addWidget(skip_btn)
         self.main_layout.addLayout(row)
 
 
@@ -665,17 +668,19 @@ class TOTConfirmDialog(SAXDialog):
 
 
 class UploadConfirmDialog(SAXDialog):
+    """Shown only when the file already exists on Monday — ask to re-upload."""
     def __init__(self, parent, contract_name):
-        super().__init__(parent, "Upload Contract to Monday?")
+        super().__init__(parent, "File Already on Monday")
         self.main_layout.addWidget(
-            self._title_label("Upload contract to Monday.com?")
+            self._title_label("This file already exists on Monday.com.")
         )
         self.main_layout.addWidget(
             self._info_box("CONTRACT FILE", contract_name)
         )
         self.main_layout.addWidget(
             self._body_label(
-                "This file was not found on Monday. Upload it now?"
+                "The contract was already found on Monday. "
+                "Upload it again anyway?"
             )
         )
         row = QHBoxLayout()
@@ -684,7 +689,7 @@ class UploadConfirmDialog(SAXDialog):
         skip_btn = QPushButton("Skip")
         skip_btn.setStyleSheet(DIALOG_BTN_GRAY)
         skip_btn.clicked.connect(lambda: self.done(2))
-        upload_btn = QPushButton("Yes — Upload")
+        upload_btn = QPushButton("Yes — Upload Again")
         upload_btn.setStyleSheet(DIALOG_BTN_BLUE)
         upload_btn.clicked.connect(self.accept)
         upload_btn.setDefault(True)
@@ -1001,7 +1006,15 @@ class ScriptRunner(QObject):
                 self._proc.stdin.flush()
                 continue
 
-            # ── UPLOAD CONFIRM ──
+            # ── UPLOAD AUTO — file not on Monday, upload immediately ──
+            if line.startswith("UI_UPLOAD_AUTO:"):
+                filename = line.replace("UI_UPLOAD_AUTO:", "").strip()
+                signals.log.emit(f"  ▸ Auto-uploading: {filename}")
+                self._proc.stdin.write("UPLOAD\n")
+                self._proc.stdin.flush()
+                continue
+
+            # ── UPLOAD CONFIRM — file already on Monday, ask user ──
             if line.startswith("UI_UPLOAD_CONFIRM:"):
                 signals.req_upload_confirm.emit(
                     line.replace("UI_UPLOAD_CONFIRM:", "").strip()
@@ -1168,6 +1181,7 @@ class SAXWindow(QMainWindow):
             runner.put_result("NEW")
 
     def handle_upload_confirm(self, contract_name):
+        """File already on Monday — ask whether to re-upload."""
         dlg = UploadConfirmDialog(self, contract_name)
         result = dlg.exec()
         if result == 2:

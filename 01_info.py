@@ -98,8 +98,8 @@ if len(existing_infos) > 0:
         sys.exit()
 
     elif response == "OVERWRITE":
-        print("OVERWRITING MOST RECENT INFO FILE")
-        info_path = existing_infos[0]
+        print("OVERWRITING OLDEST INFO FILE")
+        info_path = existing_infos[-1]
 
     else:
         print("CREATING NEW INFO FILE")

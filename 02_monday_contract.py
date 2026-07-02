@@ -1,7 +1,5 @@
 import os
 import sys
-import json
-import glob
 import mimetypes
 import requests
 
@@ -26,8 +24,7 @@ base_folder = (
 
 project_number = sys.argv[1]
 year_prefix    = project_number[:2]
-
-year_folder = os.path.join(base_folder, f"{year_prefix}-XXX")
+year_folder    = os.path.join(base_folder, f"{year_prefix}-XXX")
 
 if not os.path.exists(year_folder):
     raise Exception(f"YEAR FOLDER NOT FOUND: {year_folder}")
@@ -45,12 +42,10 @@ if not project_root:
     raise Exception(f"PROJECT FOLDER NOT FOUND: {project_number}")
 
 # =========================
-# FIND LATEST INFO FILE
+# INFO FILE HELPERS
 # =========================
 
-archive_folder = os.path.join(
-    project_root, "CALCULATIONS", "ARCHIVE"
-)
+archive_folder = os.path.join(project_root, "CALCULATIONS", "ARCHIVE")
 
 info_files = sorted(
     [
@@ -96,19 +91,8 @@ def write_monday_uploaded(value):
         f.writelines(updated)
 
 # =========================
-# CHECK INFO FILE FIRST
-# =========================
-
-info_data = read_info()
-monday_uploaded = info_data.get("MONDAY_UPLOADED", "").strip()
-
-if monday_uploaded == "Y":
-    print("MONDAY_UPLOADED=Y IN INFO FILE — SKIPPING")
-    print("DONE")
-    sys.exit()
-
-# =========================
 # FIND CONTRACT PDF
+# (done first so we always have the filename for popups)
 # =========================
 
 print("UI_STEP:Finding contract PDF")
@@ -119,10 +103,11 @@ contract_folder = os.path.join(project_root, "CONTRACT")
 if not os.path.exists(contract_folder):
     raise Exception(f"CONTRACT FOLDER NOT FOUND: {contract_folder}")
 
-contract_pdfs = []
-for file in os.listdir(contract_folder):
-    if file.lower().endswith(".pdf"):
-        contract_pdfs.append(os.path.join(contract_folder, file))
+contract_pdfs = [
+    os.path.join(contract_folder, f)
+    for f in os.listdir(contract_folder)
+    if f.lower().endswith(".pdf")
+]
 
 if not contract_pdfs:
     raise Exception("NO CONTRACT PDF FOUND")
@@ -134,7 +119,6 @@ preferred = [
         for kw in ["proposal", "contract", "engineering services"]
     )
 ]
-
 if preferred:
     contract_pdfs = preferred
 
@@ -145,11 +129,32 @@ print(f"CONTRACT PDF FOUND: {contract_file_name}")
 sys.stdout.flush()
 
 # =========================
-# CONNECT TO MONDAY
+# CHECK INFO FILE
+# If already marked uploaded, ask once here.
+# If user confirms, skip the Monday assets check and go straight to upload.
+# If user skips, exit now.
 # =========================
 
-print("UI_STEP:Connecting to Monday")
-sys.stdout.flush()
+info_data        = read_info()
+monday_uploaded  = info_data.get("MONDAY_UPLOADED", "").strip()
+user_confirmed   = False  # True if user already said yes to re-upload
+
+if monday_uploaded == "Y":
+    print(f"UI_UPLOAD_CONFIRM:{contract_file_name}")
+    sys.stdout.flush()
+    user_response = sys.stdin.readline().strip()
+    if user_response == "SKIP":
+        print("MONDAY UPLOAD SKIPPED — already marked as uploaded")
+        print("DONE")
+        sys.exit(0)
+    # User said yes — mark confirmed, skip the second Monday check later
+    user_confirmed = True
+    print("Re-upload confirmed — connecting to Monday...")
+    sys.stdout.flush()
+
+# =========================
+# MONDAY API HELPER
+# =========================
 
 def monday_query(query, variables=None):
     response = requests.post(
@@ -163,6 +168,13 @@ def monday_query(query, variables=None):
     if "errors" in data:
         raise Exception(f"MONDAY GRAPHQL ERROR: {data['errors']}")
     return data["data"]
+
+# =========================
+# CONNECT TO MONDAY
+# =========================
+
+print("UI_STEP:Connecting to Monday")
+sys.stdout.flush()
 
 # =========================
 # FIND BOARD
@@ -180,7 +192,7 @@ query {
 }
 """)
 
-board_id       = ""
+board_id        = ""
 files_column_id = ""
 
 for board in boards_data["boards"]:
@@ -197,6 +209,7 @@ if not files_column_id:
     raise Exception(f"FILES COLUMN NOT FOUND: {FILES_COLUMN}")
 
 print("MONDAY BOARD FOUND")
+sys.stdout.flush()
 
 # =========================
 # FIND ITEM
@@ -260,72 +273,76 @@ if not item_id:
         raise Exception("MONDAY ITEM NOT FOUND — NO MATCH CONFIRMED")
 
 print("MONDAY ITEM FOUND")
+sys.stdout.flush()
 
 # =========================
 # CHECK IF FILE ALREADY ON MONDAY
-# (silent — no popup)
+# Skipped entirely if user already confirmed re-upload above.
 # =========================
 
-print("Checking Monday for existing contract...")
-sys.stdout.flush()
+if user_confirmed:
+    # Already got the green light — go straight to upload
+    print("Skipping Monday assets check — re-upload already confirmed")
+    print("Re-uploading contract to Monday...")
+    sys.stdout.flush()
 
-check_data = monday_query(f"""
-query {{
-  items(ids: [{item_id}]) {{
-    assets {{
-      name
+else:
+    print("Checking Monday for existing contract...")
+    sys.stdout.flush()
+
+    check_data = monday_query(f"""
+    query {{
+      items(ids: [{item_id}]) {{
+        assets {{
+          name
+        }}
+      }}
     }}
-  }}
-}}
-""")
+    """)
 
-existing_files = []
-if check_data and "items" in check_data:
-    for item in check_data["items"]:
-        for asset in item.get("assets", []):
-            existing_files.append(asset.get("name", "").lower())
+    existing_files = []
+    if check_data and "items" in check_data:
+        for item in check_data["items"]:
+            for asset in item.get("assets", []):
+                existing_files.append(asset.get("name", "").lower())
 
-contract_lower = contract_file_name.lower()
+    contract_lower    = contract_file_name.lower()
+    already_on_monday = any(
+        contract_lower in f or f in contract_lower
+        for f in existing_files
+    )
 
-already_on_monday = any(
-    contract_lower in f or f in contract_lower
-    for f in existing_files
-)
+    if already_on_monday:
+        # File found on Monday — ask user whether to re-upload
+        print(f"UI_UPLOAD_CONFIRM:{contract_file_name}")
+        sys.stdout.flush()
+        user_response = sys.stdin.readline().strip()
+        if user_response == "SKIP":
+            print("MONDAY UPLOAD SKIPPED — file already exists on Monday")
+            write_monday_uploaded("Y")
+            print("INFO FILE UPDATED: MONDAY_UPLOADED=Y")
+            print("DONE")
+            sys.exit(0)
+        print("Re-uploading contract to Monday...")
+        sys.stdout.flush()
 
-if already_on_monday:
-    print("CONTRACT ALREADY ON MONDAY — SKIPPING UPLOAD")
-    write_monday_uploaded("Y")
-    print("INFO FILE UPDATED: MONDAY_UPLOADED=Y")
-    print("DONE")
-    sys.exit()
-
-# =========================
-# FILE NOT ON MONDAY — ASK TO UPLOAD
-# =========================
-
-print("UI_STEP:Uploading file")
-sys.stdout.flush()
-
-print(f"UI_UPLOAD_CONFIRM:{contract_file_name}")
-sys.stdout.flush()
-
-response = sys.stdin.readline().strip()
-
-if response == "SKIP":
-    print("MONDAY UPLOAD SKIPPED")
-    print("DONE")
-    sys.exit()
+    else:
+        # File not on Monday — auto-upload, no dialog
+        print("UI_STEP:Uploading file")
+        sys.stdout.flush()
+        print(f"UI_UPLOAD_AUTO:{contract_file_name}")
+        sys.stdout.flush()
+        sys.stdin.readline()  # wait for UI acknowledgement
+        print("Uploading contract to Monday...")
+        sys.stdout.flush()
 
 # =========================
-# UPLOAD
+# PERFORM UPLOAD
 # =========================
-
-print("Uploading contract to Monday...")
-sys.stdout.flush()
 
 mime_type = mimetypes.guess_type(contract_pdf)[0] or "application/pdf"
 
-query = (
+upload_query = (
     f'mutation ($file: File!) {{'
     f'  add_file_to_column('
     f'    item_id: {item_id},'
@@ -336,25 +353,26 @@ query = (
 )
 
 with open(contract_pdf, "rb") as file_handle:
-    response = requests.post(
+    upload_response = requests.post(
         MONDAY_FILE_URL,
         headers={"Authorization": MONDAY_API_KEY},
-        data={"query": query},
-        files={"variables[file]": (contract_file_name, file_handle, mime_type)}
+        data={"query": upload_query},
+        files={
+            "variables[file]": (contract_file_name, file_handle, mime_type)
+        }
     )
 
-print(f"STATUS CODE: {response.status_code}")
+print(f"STATUS CODE: {upload_response.status_code}")
+sys.stdout.flush()
 
-if response.status_code != 200:
+if upload_response.status_code != 200:
     raise Exception("MONDAY FILE UPLOAD FAILED")
 
-upload_data = response.json()
+upload_data = upload_response.json()
 if "errors" in upload_data:
     raise Exception(f"MONDAY FILE UPLOAD ERROR: {upload_data['errors']}")
 
 print("CONTRACT UPLOADED TO MONDAY FILES")
-
-# Update INFO file
 write_monday_uploaded("Y")
 print("INFO FILE UPDATED: MONDAY_UPLOADED=Y")
 print("DONE")
