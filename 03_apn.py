@@ -54,14 +54,45 @@ print("INFO FILE FOUND")
 with open(info_path, "r", encoding="utf-8") as file:
     info_lines = file.readlines()
 
-existing_apn = ""
-contract_pdf = ""
+existing_apn  = ""
+verified_apn  = ""
+contract_pdf  = ""
 
 for line in info_lines:
     if line.startswith("APN="):
         existing_apn = line.replace("APN=", "").strip()
+    if line.startswith("VERIFIED_APN="):
+        verified_apn = line.replace("VERIFIED_APN=", "").strip()
     if line.startswith("CONTRACT_PDF="):
         contract_pdf = line.replace("CONTRACT_PDF=", "").strip()
+
+# Skip if already verified OR if APN already confirmed and populated
+if verified_apn:
+    print(f"APN already verified: {verified_apn} — skipping")
+    print("DONE")
+    sys.exit(0)
+
+if existing_apn:
+    # Auto-confirm existing APN without asking
+    print(f"APN found: {existing_apn} — auto-confirming")
+    verified_apn = existing_apn
+    # Write verified APN back to INFO file
+    updated = []
+    found   = False
+    with open(info_path, "r", encoding="utf-8") as f:
+        for line in f:
+            if line.startswith("VERIFIED_APN="):
+                updated.append(f"VERIFIED_APN={verified_apn}\n")
+                found = True
+            else:
+                updated.append(line)
+    if not found:
+        updated.append(f"VERIFIED_APN={verified_apn}\n")
+    with open(info_path, "w", encoding="utf-8") as f:
+        f.writelines(updated)
+    print(f"VERIFIED APN: {verified_apn}")
+    print("DONE")
+    sys.exit(0)
 
 print(f"CURRENT APN: {existing_apn}")
 

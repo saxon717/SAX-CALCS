@@ -125,7 +125,7 @@ SCRIPTS = {
 }
 
 NORMAL_STAGES  = ["apn", "tot", "asce", "lat", "vert"]
-TOT_STAGES     = ["apn", "tot", "tot_asce", "tot_lat", "tot_vert"]
+TOT_STAGES     = ["tot_asce", "tot_lat", "tot_vert"]
 DEFAULT_STAGES = NORMAL_STAGES
 
 STAGE_LABELS = {
@@ -151,9 +151,9 @@ DEPENDENCIES = {
     "asce":     ["info", "apn", "tot"],
     "lat":      ["info", "apn", "tot", "asce"],
     "vert":     ["info", "apn", "tot", "asce", "lat"],
-    "tot_asce": ["info", "apn", "tot"],
-    "tot_lat":  ["info", "apn", "tot", "tot_asce"],
-    "tot_vert": ["info", "apn", "tot", "tot_asce", "tot_lat"],
+    "tot_asce": ["info"],
+    "tot_lat":  ["info", "tot_asce"],
+    "tot_vert": ["info", "tot_asce", "tot_lat"],
     "monday":   ["info"],
     "sync": [], "notify": [], "tot_sync": [], "tot_notify": [],
 }
