@@ -6,21 +6,25 @@ import re
 import shutil
 from datetime import datetime
 
+from config import (
+    BASE_FOLDER,
+    UI_SUBFOLDER,
+    CONTRACT_SUBFOLDER,
+    YEAR_FOLDER_SUFFIX,
+    TEMPLATE_FOLDER,
+    LAT_TEMPLATE_NAME,
+)
+
+
 # =========================
 # PROJECT NUMBER
 # =========================
 
 project_number = sys.argv[1]
 year_prefix = project_number[:2]
-
-base_folder = (
-    r"C:\Users\saxon\Dropbox\SHEAR FORCE"
-    r"\1) CURRENT PROJECTS"
-)
-
-year_group_folder = os.path.join(
-    base_folder,
-    f"{year_prefix}-XXX"
+year_folder = os.path.join(
+    BASE_FOLDER,
+    f"{year_prefix}{YEAR_FOLDER_SUFFIX}"
 )
 
 # =========================
@@ -33,10 +37,10 @@ sys.stdout.flush()
 project_root = ""
 project_folder_name = ""
 
-for folder in os.listdir(year_group_folder):
+for folder in os.listdir(year_folder):
     if folder.startswith(project_number):
         project_root = os.path.join(
-            year_group_folder, folder
+            year_folder, folder
         )
         project_folder_name = folder
         break
@@ -59,11 +63,8 @@ project_name_only = (
 project_folder = os.path.join(
     project_root, "CALCULATIONS"
 )
-
-archive_folder = os.path.join(
-    project_folder, "ARCHIVE"
-)
-
+ui_folder = os.path.join(project_root, UI_SUBFOLDER)
+os.makedirs(ui_folder, exist_ok=True)
 # =========================
 # FIND NEWEST INFO FILE
 # =========================
@@ -71,14 +72,14 @@ archive_folder = os.path.join(
 info_path = ""
 latest_time = 0
 
-for file in os.listdir(archive_folder):
+for file in os.listdir(ui_folder):
     upper_file = file.upper()
     if (
         file.endswith(".txt")
         and "INFO" in upper_file
         and project_number in upper_file
     ):
-        full_path = os.path.join(archive_folder, file)
+        full_path = os.path.join(ui_folder, file)
         modified_time = os.path.getmtime(full_path)
         if modified_time > latest_time:
             latest_time = modified_time
@@ -175,14 +176,11 @@ print(f"ASCE PDF FOUND: {pdf_path}")
 # LAT TEMPLATE
 # =========================
 
-template_folder = (
-    r"C:\Users\saxon\Dropbox\SHEAR FORCE"
-    r"\4) TEMPLATES\CALC EXCEL TEMPLATES"
-)
+template_folder = TEMPLATE_FOLDER
 
 template_path = os.path.join(
     template_folder,
-    "SF Lateral Design Template 3.28.26.xlsm"
+    LAT_TEMPLATE_NAME
 )
 
 if not os.path.exists(template_path):

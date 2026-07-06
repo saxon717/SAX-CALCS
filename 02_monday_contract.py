@@ -4,17 +4,16 @@ import mimetypes
 import requests
 
 from monday_config import (
+    MONDAY_API_KEY,
+    BOARD_NAME,
+    FILES_COLUMN
+)
 
 from config import (
     BASE_FOLDER,
     UI_SUBFOLDER,
     CONTRACT_SUBFOLDER,
     YEAR_FOLDER_SUFFIX,
-)
-
-    MONDAY_API_KEY,
-    BOARD_NAME,
-    FILES_COLUMN
 )
 
 MONDAY_API_URL = "https://api.monday.com/v2"

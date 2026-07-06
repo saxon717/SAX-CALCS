@@ -6,13 +6,11 @@ import re
 import sys
 from datetime import datetime
 
-# =========================
-# BASE FOLDER
-# =========================
-
-base_folder = (
-    r"C:\Users\saxon\Dropbox\SHEAR FORCE"
-    r"\1) CURRENT PROJECTS"
+from config import (
+    BASE_FOLDER,
+    UI_SUBFOLDER,
+    CALC_SUBFOLDER,
+    YEAR_FOLDER_SUFFIX,
 )
 
 # =========================
@@ -20,12 +18,8 @@ base_folder = (
 # =========================
 
 project_number = sys.argv[1]
-year_prefix = project_number[:2]
-
-year_folder = os.path.join(
-    base_folder,
-    f"{year_prefix}-XXX"
-)
+year_prefix    = project_number[:2]
+year_folder    = os.path.join(BASE_FOLDER, f"{year_prefix}{YEAR_FOLDER_SUFFIX}")
 
 # =========================
 # FIND PROJECT
@@ -34,12 +28,12 @@ year_folder = os.path.join(
 print("UI_STEP:Reading INFO file")
 sys.stdout.flush()
 
-project_root = ""
+project_root        = ""
 project_folder_name = ""
 
 for folder in os.listdir(year_folder):
     if folder.startswith(project_number):
-        project_root = os.path.join(year_folder, folder)
+        project_root        = os.path.join(year_folder, folder)
         project_folder_name = folder
         break
 
@@ -47,28 +41,27 @@ if project_root == "":
     raise Exception("PROJECT FOLDER NOT FOUND")
 
 # =========================
-# FIND NEWEST INFO FILE
+# FIND INFO FILE IN UI FOLDER
 # =========================
 
-archive_folder = os.path.join(
-    project_root, "CALCULATIONS", "ARCHIVE"
-)
+ui_folder = os.path.join(project_root, UI_SUBFOLDER)
+os.makedirs(ui_folder, exist_ok=True)
 
-info_path = ""
+info_path   = ""
 latest_time = 0
 
-for file in os.listdir(archive_folder):
+for file in os.listdir(ui_folder):
     upper_file = file.upper()
     if (
         file.endswith(".txt")
         and "INFO" in upper_file
         and project_number in upper_file
     ):
-        full_path = os.path.join(archive_folder, file)
+        full_path     = os.path.join(ui_folder, file)
         modified_time = os.path.getmtime(full_path)
         if modified_time > latest_time:
             latest_time = modified_time
-            info_path = full_path
+            info_path   = full_path
 
 if info_path == "":
     raise Exception("INFO FILE NOT FOUND")
@@ -82,26 +75,18 @@ print("INFO FILE FOUND")
 with open(info_path, "r", encoding="utf-8") as file:
     info_lines = file.readlines()
 
-# =========================
-# EXTRACT INFO
-# =========================
-
-project_name   = ""
+project_name    = ""
 project_address = ""
-city           = ""
-state          = ""
-zip_code       = ""
-tot_status     = ""
+city            = ""
+state           = ""
+zip_code        = ""
+tot_status      = ""
 
 for line in info_lines:
     if line.startswith("PROJECT_NAME="):
-        project_name = line.replace(
-            "PROJECT_NAME=", ""
-        ).strip()
+        project_name = line.replace("PROJECT_NAME=", "").strip()
     if line.startswith("PROJECT_ADDRESS="):
-        project_address = line.replace(
-            "PROJECT_ADDRESS=", ""
-        ).strip()
+        project_address = line.replace("PROJECT_ADDRESS=", "").strip()
     if line.startswith("CITY="):
         city = line.replace("CITY=", "").strip()
     if line.startswith("STATE="):
@@ -117,15 +102,37 @@ for line in info_lines:
 
 if tot_status == "Y":
     print("TOT PROJECT — USE TOT_ASCE.PY INSTEAD")
-    sys.exit()
+    sys.exit(0)
 
 # =========================
 # FOLDERS
 # =========================
 
-calculations_folder = os.path.join(
-    project_root, "CALCULATIONS"
-)
+calculations_folder = os.path.join(project_root, CALC_SUBFOLDER)
+
+# =========================
+# CHECK IF ASCE PDF ALREADY EXISTS
+# =========================
+
+existing_asce = []
+for file in os.listdir(calculations_folder):
+    if (
+        file.endswith(".pdf")
+        and "ASCEDesignHazardsReport" in file
+    ):
+        existing_asce.append(file)
+
+if existing_asce:
+    # Ask user via UI signal
+    print(f"UI_ASCE_EXISTS:{existing_asce[0]}")
+    sys.stdout.flush()
+    response = sys.stdin.readline().strip()
+    if response == "SKIP":
+        print(f"ASCE REPORT ALREADY EXISTS — SKIPPING")
+        print("DONE")
+        sys.exit(0)
+    print("RE-RUNNING ASCE REPORT...")
+    sys.stdout.flush()
 
 # =========================
 # TODAY DATE
@@ -144,9 +151,7 @@ final_pdf_name = (
     f" - {today_date}.pdf"
 )
 
-final_pdf_path = os.path.join(
-    calculations_folder, final_pdf_name
-)
+final_pdf_path = os.path.join(calculations_folder, final_pdf_name)
 
 # =========================
 # CLEAN ADDRESS FUNCTION
@@ -178,13 +183,9 @@ with sync_playwright() as p:
 
     browser = p.chromium.launch(headless=False)
     context = browser.new_context(accept_downloads=True)
-    page = context.new_page()
+    page    = context.new_page()
 
-    page.goto(
-        "https://ascehazardtool.org/",
-        timeout=120000
-    )
-
+    page.goto("https://ascehazardtool.org/", timeout=120000)
     print("WEBSITE OPENED")
     page.wait_for_timeout(3000)
 
@@ -203,9 +204,7 @@ with sync_playwright() as p:
 
     # Close cookie popup
     try:
-        page.locator(
-            "button:has-text('Got it')"
-        ).click(force=True)
+        page.locator("button:has-text('Got it')").click(force=True)
         print("COOKIE POPUP CLOSED")
     except:
         print("COOKIE POPUP NOT FOUND")
@@ -247,7 +246,7 @@ with sync_playwright() as p:
         address_box.press("ArrowDown")
         page.wait_for_timeout(700)
 
-        current_value = address_box.input_value()
+        current_value  = address_box.input_value()
         cleaned_result = clean_address(current_value)
 
         similarity = SequenceMatcher(
@@ -255,7 +254,6 @@ with sync_playwright() as p:
         ).ratio()
 
         similarity_percent = round(similarity * 100, 1)
-
         print(f"DROPDOWN OPTION {i + 1}: {similarity_percent}% match")
 
         if similarity >= 0.90:
@@ -266,24 +264,18 @@ with sync_playwright() as p:
             break
 
     if not matched:
-        raise Exception(
-            "NO MATCHING ADDRESS FOUND IN DROPDOWN"
-        )
+        raise Exception("NO MATCHING ADDRESS FOUND IN DROPDOWN")
 
     page.wait_for_timeout(4000)
 
-    resolved_text = page.locator(
-        "#geocoder_input"
-    ).input_value()
-
+    resolved_text = page.locator("#geocoder_input").input_value()
     print(f"RESOLVED ADDRESS: {resolved_text}")
 
-    final_compare = clean_address(resolved_text)
+    final_compare    = clean_address(resolved_text)
     final_similarity = SequenceMatcher(
         None, target_compare, final_compare
     ).ratio()
     final_percent = round(final_similarity * 100, 1)
-
     print(f"FINAL MATCH: {final_percent}%")
 
     if final_similarity < 0.90:
@@ -296,9 +288,7 @@ with sync_playwright() as p:
     print("UI_STEP:Selecting criteria")
     sys.stdout.flush()
 
-    page.locator(
-        "#risk-level-selector"
-    ).select_option("II")
+    page.locator("#risk-level-selector").select_option("II")
     print("RISK CATEGORY II SELECTED")
 
     page.wait_for_timeout(1000)
@@ -322,10 +312,7 @@ with sync_playwright() as p:
     print("Waiting for results page...")
     page.wait_for_timeout(10000)
 
-    page.wait_for_selector(
-        "text=Full Report",
-        timeout=240000
-    )
+    page.wait_for_selector("text=Full Report", timeout=240000)
     print("FULL REPORT BUTTON FOUND")
 
     # =========================
@@ -336,9 +323,7 @@ with sync_playwright() as p:
     sys.stdout.flush()
 
     with page.expect_download(timeout=240000) as download_info:
-        page.get_by_text(
-            "Full Report", exact=True
-        ).click(force=True)
+        page.get_by_text("Full Report", exact=True).click(force=True)
 
     download = download_info.value
     print("DOWNLOAD COMPLETE")
@@ -350,9 +335,9 @@ with sync_playwright() as p:
     print("UI_STEP:Saving PDF")
     sys.stdout.flush()
 
-    base_name = os.path.splitext(final_pdf_name)[0]
-    extension = ".pdf"
-    counter   = 2
+    base_name          = os.path.splitext(final_pdf_name)[0]
+    extension          = ".pdf"
+    counter            = 2
     new_final_pdf_path = final_pdf_path
 
     while os.path.exists(new_final_pdf_path):
@@ -364,10 +349,6 @@ with sync_playwright() as p:
 
     download.save_as(new_final_pdf_path)
     print(f"PDF SAVED: {new_final_pdf_path}")
-
-# =========================
-# COMPLETE
-# =========================
 
 print("ASCE COMPLETE")
 print("DONE")

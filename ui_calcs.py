@@ -9,10 +9,10 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout,
     QHBoxLayout, QLabel, QLineEdit, QPushButton,
     QTextEdit, QProgressBar, QDialog, QFrame,
-    QCompleter, QSplashScreen
+    QComboBox, QCompleter,
 )
-from PySide6.QtCore import Qt, Signal, QObject, QTimer, QStringListModel
-from PySide6.QtGui import QFont, QIntValidator, QPixmap, QColor
+from PySide6.QtCore import Qt, Signal, QObject, QTimer
+from PySide6.QtGui import QFont, QIntValidator
 
 # =========================
 # COLORS
@@ -202,6 +202,7 @@ class Signals(QObject):
     pipeline_progress = Signal(int, int)
     stage_progress    = Signal(int, int)
     after_info        = Signal(bool)
+    reset_bars        = Signal()
     req_open_pdf      = Signal(str, str)
     req_bad_template  = Signal(str)
     req_confirm_apn   = Signal(str)
@@ -212,6 +213,7 @@ class Signals(QObject):
     req_upload_confirm  = Signal(str)   # file already on Monday — ask to re-upload
     req_xl_complete     = Signal(str)   # XL files done — pipe-delimited paths
     req_tot_manual      = Signal(str)   # TOT inconclusive or unmatched — manual Y/N
+    req_asce_exists     = Signal(str)   # ASCE PDF already found — skip or rerun
 
 
 signals = Signals()
@@ -222,48 +224,7 @@ signals = Signals()
 
 CACHE_FILE = os.path.join(script_folder, "project_cache.json")
 
-def scan_all_projects(progress_cb=None):
-    """Scan all year folders and return list of (number, name, path) tuples."""
-    projects = []
-    if not os.path.exists(base_folder):
-        return projects
-    try:
-        year_folders = [
-            d for d in os.listdir(base_folder)
-            if os.path.isdir(os.path.join(base_folder, d))
-            and d.endswith("-XXX")
-        ]
-    except Exception:
-        return projects
-
-    for i, yf in enumerate(sorted(year_folders)):
-        yf_path = os.path.join(base_folder, yf)
-        try:
-            for folder in sorted(os.listdir(yf_path)):
-                full = os.path.join(yf_path, folder)
-                if not os.path.isdir(full):
-                    continue
-                # Project folders start with XX-XXX pattern
-                parts = folder.split(" ", 1)
-                if len(parts) >= 1 and "-" in parts[0]:
-                    number = parts[0].strip()
-                    name   = parts[1].strip() if len(parts) > 1 else ""
-                    projects.append({
-                        "number": number,
-                        "name":   name,
-                        "path":   full,
-                        "folder": folder,
-                    })
-        except Exception:
-            pass
-        if progress_cb:
-            progress_cb(i + 1, len(year_folders))
-
-    return projects
-
-
 def load_cache():
-    """Load cached project list from disk."""
     if not os.path.exists(CACHE_FILE):
         return []
     try:
@@ -272,30 +233,76 @@ def load_cache():
     except Exception:
         return []
 
-
 def save_cache(projects):
-    """Save project list to disk cache."""
     try:
         with open(CACHE_FILE, "w", encoding="utf-8") as f:
             json.dump(projects, f, indent=2)
     except Exception:
         pass
 
-
-def refresh_cache(progress_cb=None):
+def scan_new_projects():
     """
-    Load existing cache, scan for new folders not already in it,
-    append them, save and return full list.
+    Scan only the 26-XXX folder, and only for projects
+    not already in the cache. Finds the highest 26-xxx
+    number in cache and only checks beyond that.
     """
-    existing   = load_cache()
+    existing    = load_cache()
     known_paths = {p["path"] for p in existing}
-    fresh       = scan_all_projects(progress_cb)
-    new_entries = [p for p in fresh if p["path"] not in known_paths]
-    combined    = existing + new_entries
-    if new_entries:
-        save_cache(combined)
-    return combined
 
+    # Find highest 26-xxx number already cached
+    last_26 = 0
+    for p in existing:
+        num = p.get("number", "")
+        if num.startswith("26-"):
+            try:
+                n = int(num.split("-")[1])
+                if n > last_26:
+                    last_26 = n
+            except Exception:
+                pass
+
+    year_folder = os.path.join(base_folder, "26-XXX")
+    new_entries = []
+
+    if not os.path.exists(year_folder):
+        return existing, []
+
+    try:
+        for folder in sorted(os.listdir(year_folder)):
+            full = os.path.join(year_folder, folder)
+            if not os.path.isdir(full):
+                continue
+            parts = folder.split(" ", 1)
+            if not (len(parts) >= 1 and "-" in parts[0]):
+                continue
+            number = parts[0].strip()
+            if not number.startswith("26-"):
+                continue
+            try:
+                n = int(number.split("-")[1])
+            except Exception:
+                continue
+            # Only add if beyond last cached and not already known
+            if n > last_26 and full not in known_paths:
+                name = parts[1].strip() if len(parts) > 1 else ""
+                new_entries.append({
+                    "number": number,
+                    "name":   name,
+                    "path":   full,
+                    "folder": folder,
+                })
+    except Exception:
+        pass
+
+    return existing, new_entries
+
+def get_project_list():
+    """Load from cache instantly. Returns list of display strings."""
+    projects = load_cache()
+    return [
+        f"{p['number']} — {p['name']}" if p.get('name') else p['number']
+        for p in sorted(projects, key=lambda x: x['number'], reverse=True)
+    ]
 
 # =========================
 # HELPERS
@@ -334,71 +341,6 @@ def get_info_data(project_root, project_number):
                 key, _, val = line.partition("=")
                 data[key.strip()] = val.strip()
     return data
-
-# =========================
-# SPLASH SCREEN
-# =========================
-
-class SAXSplash(QWidget):
-    done = Signal(list)   # emits project list when scan complete
-
-    def __init__(self):
-        super().__init__()
-        self.setWindowFlags(Qt.SplashScreen | Qt.FramelessWindowHint)
-        self.setFixedSize(420, 200)
-        self.setStyleSheet(
-            f"background-color:{BG};border:1px solid {BORDER};border-radius:10px;"
-        )
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(32, 28, 32, 28)
-        layout.setSpacing(12)
-
-        title = QLabel("SAX")
-        title.setFont(QFont("Arial", 28, QFont.Bold))
-        title.setStyleSheet(f"color:{BLUE};background:transparent;border:none;")
-        title.setAlignment(Qt.AlignCenter)
-        layout.addWidget(title)
-
-        self.status = QLabel("Loading projects...")
-        self.status.setFont(QFont("Arial", 10))
-        self.status.setStyleSheet(f"color:{SUBTEXT};background:transparent;border:none;")
-        self.status.setAlignment(Qt.AlignCenter)
-        layout.addWidget(self.status)
-
-        self.bar = QProgressBar()
-        self.bar.setRange(0, 100)
-        self.bar.setValue(0)
-        self.bar.setTextVisible(False)
-        self.bar.setFixedHeight(6)
-        self.bar.setStyleSheet(
-            f"QProgressBar{{background:{BTN_DEFAULT};border-radius:3px;border:none;}}"
-            f"QProgressBar::chunk{{background:{BLUE};border-radius:3px;}}"
-        )
-        layout.addWidget(self.bar)
-
-        # Center on screen
-        screen = QApplication.primaryScreen().availableGeometry()
-        self.move(
-            (screen.width()  - self.width())  // 2,
-            (screen.height() - self.height()) // 2,
-        )
-
-    def start(self):
-        def worker():
-            def progress(current, total):
-                pct = int((current / total) * 100) if total else 0
-                # Use QTimer to update UI safely from thread
-                QTimer.singleShot(0, lambda: self._update(pct))
-            projects = refresh_cache(progress_cb=progress)
-            QTimer.singleShot(0, lambda: self.done.emit(projects))
-
-        threading.Thread(target=worker, daemon=True).start()
-
-    def _update(self, pct):
-        self.bar.setValue(pct)
-        self.status.setText(f"Scanning projects... {pct}%")
-
 
 # =========================
 # APN WIDGET
@@ -902,18 +844,63 @@ class DependencyDialog(SAXDialog):
 
 
 # =========================
+# ASCE EXISTS DIALOG
+# =========================
+
+class ASCEExistsDialog(SAXDialog):
+    def __init__(self, parent, filename):
+        super().__init__(parent, "ASCE Report Already Exists")
+        self.main_layout.addWidget(
+            self._title_label("ASCE report already found.")
+        )
+        self.main_layout.addWidget(
+            self._info_box("EXISTING FILE", filename)
+        )
+        self.main_layout.addWidget(
+            self._body_label("Skip and use existing, or re-run?")
+        )
+        row = QHBoxLayout()
+        row.setSpacing(10)
+        row.addStretch()
+        skip_btn = QPushButton("Skip — Use Existing")
+        skip_btn.setStyleSheet(DIALOG_BTN_BLUE)
+        skip_btn.clicked.connect(lambda: self.done(2))
+        rerun_btn = QPushButton("Re-run ASCE")
+        rerun_btn.setStyleSheet(DIALOG_BTN_GREEN)
+        rerun_btn.clicked.connect(self.accept)
+        rerun_btn.setDefault(True)
+        row.addWidget(skip_btn)
+        row.addWidget(rerun_btn)
+        self.main_layout.addLayout(row)
+
+
+# =========================
 # TOT MANUAL DIALOG
 # =========================
 
 class TOTManualDialog(SAXDialog):
-    def __init__(self, parent, message):
+    def __init__(self, parent, payload):
         super().__init__(parent, "TOT Manual Override")
+        # payload format: "message|address|apn"
+        parts   = payload.split("|")
+        message = parts[0].strip()
+        address = parts[1].strip() if len(parts) > 1 else ""
+        apn     = parts[2].strip() if len(parts) > 2 else ""
+
         self.main_layout.addWidget(
             self._title_label("Manual Override Required")
         )
-        self.main_layout.addWidget(
-            self._body_label(message)
-        )
+        self.main_layout.addWidget(self._body_label(message))
+
+        if address:
+            self.main_layout.addWidget(
+                self._info_box("PROJECT ADDRESS", address)
+            )
+        if apn:
+            self.main_layout.addWidget(
+                self._info_box("VERIFIED APN", apn)
+            )
+
         self.main_layout.addWidget(
             self._body_label("Is this a TOT project?")
         )
@@ -1252,7 +1239,18 @@ class ScriptRunner(QObject):
                 self._proc.stdin.flush()
                 continue
 
-            # ── TOT MANUAL OVERRIDE (inconclusive or unmatched search) ──
+            # ── ASCE EXISTS — ask skip or rerun ──
+            if line.startswith("UI_ASCE_EXISTS:"):
+                filename = line.replace("UI_ASCE_EXISTS:", "").strip()
+                signals.req_asce_exists.emit(filename)
+                result = self._wait_for_result(key, timeout=120)
+                if result is None:
+                    return False
+                self._proc.stdin.write(result + "\n")
+                self._proc.stdin.flush()
+                continue
+
+            # ── TOT MANUAL OVERRIDE ──
             if line.startswith("UI_TOT_MANUAL:"):
                 msg = line.replace("UI_TOT_MANUAL:", "").strip()
                 signals.req_tot_manual.emit(msg)
@@ -1386,7 +1384,9 @@ class SAXWindow(QMainWindow):
         signals.req_info_exists.connect(self.handle_info_exists)
         signals.req_upload_confirm.connect(self.handle_upload_confirm)
         signals.req_xl_complete.connect(self.handle_xl_complete)
+        signals.reset_bars.connect(self._reset_stage_bars)
         signals.req_tot_manual.connect(self.handle_tot_manual)
+        signals.req_asce_exists.connect(self.handle_asce_exists)
 
         self._build_ui()
         self._build_stage_buttons(DEFAULT_STAGES, enabled=False)
@@ -1435,6 +1435,11 @@ class SAXWindow(QMainWindow):
             runner.put_result("OVERRIDE")
         else:
             runner.put_result("CONFIRMED")
+
+    def handle_asce_exists(self, filename):
+        dlg    = ASCEExistsDialog(self, filename)
+        result = dlg.exec()
+        runner.put_result("SKIP" if result == 2 else "RERUN")
 
     def handle_tot_manual(self, message):
         dlg = TOTManualDialog(self, message)
@@ -1514,7 +1519,7 @@ class SAXWindow(QMainWindow):
         title.setStyleSheet(f"color:{BLUE};")
         ll.addWidget(title)
 
-        subtitle = QLabel("Structural Automation Extension")
+        subtitle = QLabel("Structural Automation Xtension")
         subtitle.setFont(QFont("Arial", 9))
         subtitle.setStyleSheet(f"color:{SUBTEXT};")
         subtitle.setWordWrap(True)
@@ -1522,28 +1527,30 @@ class SAXWindow(QMainWindow):
         ll.addSpacing(14)
 
         self._slabel(ll, "PROJECT")
-        self.project_input = QLineEdit()
-        self.project_input.setPlaceholderText("Type to search projects...")
+        self.project_input = QComboBox()
+        self.project_input.setEditable(True)
+        self.project_input.setInsertPolicy(QComboBox.NoInsert)
+        self.project_input.lineEdit().setPlaceholderText("Type or click ▼ to browse...")
         self.project_input.setStyleSheet(
-            f"QLineEdit{{background-color:{BG};color:{TEXT};"
+            f"QComboBox{{background-color:{BG};color:{TEXT};"
             f"border:1px solid {BORDER};border-radius:6px;"
-            f"padding:8px 10px;font-family:Arial;font-size:13px;}}"
-            f"QLineEdit:focus{{border-color:{BLUE};}}"
+            f"padding:6px 10px;font-family:Arial;font-size:13px;}}"
+            f"QComboBox:focus{{border-color:{BLUE};}}"
+            f"QComboBox::drop-down{{border:none;width:24px;}}"
+            f"QComboBox::down-arrow{{width:10px;height:10px;}}"
+            f"QComboBox QAbstractItemView{{"
+            f"background:{PANEL};color:{TEXT};border:1px solid {BORDER};"
+            f"font-family:Arial;font-size:12px;padding:4px;"
+            f"selection-background-color:{BLUE};selection-color:white;}}"
         )
-        self.project_input.returnPressed.connect(self.load_project)
-        self._completer_model = QStringListModel()
-        self._completer = QCompleter()
-        self._completer.setModel(self._completer_model)
-        self._completer.setCaseSensitivity(Qt.CaseInsensitive)
-        self._completer.setFilterMode(Qt.MatchContains)
-        self._completer.setCompletionMode(QCompleter.PopupCompletion)
-        self._completer.popup().setStyleSheet(
-            f"QListView{{background:{PANEL};color:{TEXT};border:1px solid {BORDER};"
-            f"font-family:Arial;font-size:12px;padding:4px;}}"
-            f"QListView::item:selected{{background:{BLUE};color:white;}}"
-        )
-        self._completer.activated.connect(self._on_project_selected)
-        self.project_input.setCompleter(self._completer)
+        self.project_input.setMaxVisibleItems(30)
+        self.project_input.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+        completer = self.project_input.completer()
+        completer.setFilterMode(Qt.MatchContains)
+        completer.setCaseSensitivity(Qt.CaseInsensitive)
+        completer.setCompletionMode(QCompleter.PopupCompletion)
+        self.project_input.lineEdit().returnPressed.connect(self.load_project)
+        self.project_input.activated.connect(self._on_project_selected)
         ll.addWidget(self.project_input)
 
         self.project_name_label = QLabel("")
@@ -1559,7 +1566,7 @@ class SAXWindow(QMainWindow):
         self.tot_badge.setStyleSheet(f"color:{SUBTEXT};")
         ll.addWidget(self.tot_badge)
 
-        self.load_btn = QPushButton("Select Project")
+        self.load_btn = QPushButton("Load Project")
         self.load_btn.setStyleSheet(
             f"QPushButton{{background-color:{BTN_DEFAULT};color:{TEXT};"
             f"border:1px solid {BORDER};border-radius:6px;padding:8px;"
@@ -1569,6 +1576,20 @@ class SAXWindow(QMainWindow):
         )
         self.load_btn.clicked.connect(self.load_project)
         ll.addWidget(self.load_btn)
+
+        self.open_project_btn = QPushButton("📁  Open Project")
+        self.open_project_btn.setMinimumHeight(36)
+        self.open_project_btn.setStyleSheet(
+            f"QPushButton{{background-color:{BTN_DEFAULT};color:{TEXT};"
+            f"border:1px solid {BORDER};border-radius:6px;padding:8px 14px;"
+            f"font-family:Arial;font-size:12px;text-align:left;}}"
+            f"QPushButton:hover{{background-color:{BTN_HOVER};border-color:{BLUE};}}"
+            f"QPushButton:disabled{{background-color:#2A2A3E;"
+            f"color:{SUBTEXT};border-color:#333355;}}"
+        )
+        self.open_project_btn.setEnabled(False)
+        self.open_project_btn.clicked.connect(self.open_project_folder)
+        ll.addWidget(self.open_project_btn)
         ll.addSpacing(6)
 
         self.upload_btn = QPushButton("▶▶  UPLOAD CONTRACT")
@@ -1615,6 +1636,17 @@ class SAXWindow(QMainWindow):
         ll.addWidget(self.setup_revit_btn)
 
         ll.addStretch()
+
+        self.refresh_btn = QPushButton("⟳  Refresh Projects")
+        self.refresh_btn.setStyleSheet(
+            f"QPushButton{{background-color:{BTN_DEFAULT};color:{SUBTEXT};"
+            f"border:1px solid #333355;border-radius:6px;padding:6px;"
+            f"font-family:Arial;font-size:11px;}}"
+            f"QPushButton:hover{{color:{TEXT};border-color:{BORDER};}}"
+        )
+        self.refresh_btn.clicked.connect(self.refresh_projects)
+        ll.addWidget(self.refresh_btn)
+
         root.addWidget(left)
 
         # RIGHT PANEL
@@ -1675,7 +1707,7 @@ class SAXWindow(QMainWindow):
         self.log_display.setStyleSheet(
             f"QTextEdit{{background-color:{BG};color:{TEXT};"
             f"border:1px solid {BORDER};border-radius:8px;"
-            f"padding:12px;font-family:Courier New;font-size:11px;}}"
+            f"padding:12px;font-family:Courier New;font-size:14px;}}"
         )
         rl.addWidget(self.log_display)
 
@@ -1750,6 +1782,7 @@ class SAXWindow(QMainWindow):
         if not self.running:
             self.setup_calcs_btn.set_enabled(True)
             self.upload_btn.setEnabled(True)
+            self.open_project_btn.setEnabled(True)
             for btn in self.stage_buttons.values():
                 if btn.key not in COMING_SOON:
                     btn.set_enabled_active(True)
@@ -1758,27 +1791,62 @@ class SAXWindow(QMainWindow):
     # LOAD PROJECT
     # =========================
 
-    def populate_projects(self, projects):
-        """Called after splash scan — loads projects into completer."""
-        self._project_cache = {
-            p["number"]: p for p in projects
-        }
-        # Build display strings: "26-035 — Project Name"
-        display = [
-            f"{p['number']} — {p['name']}" if p['name'] else p['number']
-            for p in sorted(projects, key=lambda x: x['number'], reverse=True)
-        ]
-        self._completer_model.setStringList(display)
-        self.append_log(f"  ▸ {len(projects)} projects loaded")
+    def populate_projects(self, projects=None):
+        """Load project list from cache into dropdown — instant."""
+        items = get_project_list()
+        self.project_input.blockSignals(True)
+        self.project_input.clear()
+        self.project_input.addItems(items)
+        self.project_input.setCurrentIndex(-1)
+        self.project_input.lineEdit().clear()
+        # Re-apply completer after clear() disconnects it
+        completer = self.project_input.completer()
+        completer.setFilterMode(Qt.MatchContains)
+        completer.setCaseSensitivity(Qt.CaseInsensitive)
+        self.project_input.blockSignals(False)
 
-    def _on_project_selected(self, text):
+    def refresh_projects(self):
+        """Scan only 26-XXX for new projects beyond last cached, update dropdown."""
+        self.refresh_btn.setEnabled(False)
+        self.refresh_btn.setText("⟳  Scanning...")
+        self.append_log("Checking 26-XXX for new projects...")
+
+        def worker():
+            existing, new_entries = scan_new_projects()
+            if new_entries:
+                combined = existing + new_entries
+                save_cache(combined)
+                signals.log.emit(
+                    f"  ▸ {len(new_entries)} new project(s) added:"
+                )
+                for p in new_entries:
+                    label = f"{p['number']} — {p['name']}" if p.get('name') else p['number']
+                    signals.log.emit(f"      {label}")
+            else:
+                signals.log.emit("  ▸ No new projects found")
+            QTimer.singleShot(0, self._after_refresh)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _after_refresh(self):
+        self.populate_projects()
+        self.refresh_btn.setEnabled(True)
+        self.refresh_btn.setText("⟳  Refresh Projects")
+        self.append_log("Project list updated — Done.")
+
+    def _on_project_selected(self, index):
         """User picked a project from the dropdown."""
-        # Extract just the number from "26-035 — Name"
-        number = text.split(" — ")[0].strip()
-        self.project_input.setText(number)
+        text = self.project_input.itemText(index)
+        self.project_input.lineEdit().setText(text.split(" — ")[0].strip())
+
+    def open_project_folder(self):
+        if self.project_root and os.path.exists(self.project_root):
+            os.startfile(self.project_root)
+        else:
+            self.append_log("ERROR: Project folder not found.")
 
     def load_project(self):
-        pn = self.project_input.text().strip()
+        pn = self.project_input.lineEdit().text().strip().split(" — ")[0].strip()
         if not pn:
             self.append_log("ERROR: Enter a project number.")
             return
@@ -1789,22 +1857,18 @@ class SAXWindow(QMainWindow):
             self.append_log(f"ERROR: No project found for {pn}")
             return
 
-        dlg = ConfirmProjectDialog(self, project_name)
-        if dlg.exec() != QDialog.Accepted:
-            self.append_log("Project load cancelled.")
-            return
-
         self.project_number   = pn
         self.project_root     = project_root
         self.project_name     = project_name
         self.completed_stages = set()
         self.project_name_label.setText(project_name)
         self.project_name_label.setStyleSheet(f"color:{GREEN};")
-        self.append_log(f"Project confirmed: {project_name}")
+        self.append_log(f"Project loaded: {project_name}")
         self.append_log("--- Running 01 — Project Info ---")
         self.load_btn.setEnabled(False)
         self.setup_calcs_btn.set_enabled(False)
         self.upload_btn.setEnabled(False)
+        self.open_project_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
         self._reset_stage_bars()
 
@@ -1849,6 +1913,7 @@ class SAXWindow(QMainWindow):
         self._reset_stage_bars()
         self.setup_calcs_btn.set_enabled(True)
         self.upload_btn.setEnabled(True)
+        self.open_project_btn.setEnabled(True)
 
     # =========================
     # PROGRESS & CLOCK
@@ -1995,7 +2060,7 @@ class SAXWindow(QMainWindow):
                 signals.log.emit(
                     f"--- Running {STAGE_LABELS.get(m, m)} first ---"
                 )
-                self._reset_stage_bars()
+                signals.reset_bars.emit()
                 suc = runner.run(m, self.project_number)
                 if suc:
                     self.completed_stages.add(m)
@@ -2005,7 +2070,7 @@ class SAXWindow(QMainWindow):
                     signals.log.emit(
                         f"--- Now running {STAGE_LABELS.get(k, k)} ---"
                     )
-                    self._reset_stage_bars()
+                    signals.reset_bars.emit()
                     runner.run(k, self.project_number)
                 else:
                     signals.log.emit(
@@ -2057,12 +2122,16 @@ class SAXWindow(QMainWindow):
 
         def worker():
             completed = 0
-            for key in stages:
+            stages_list = list(stages)  # mutable copy
+            i = 0
+            while i < len(stages_list):
                 if not self.running:
                     break
+                key = stages_list[i]
+                i += 1
                 if key in COMING_SOON:
                     completed += 1
-                    signals.pipeline_progress.emit(completed, total)
+                    signals.pipeline_progress.emit(completed, len(stages_list))
                     continue
                 btn = self.stage_buttons.get(key)
                 if btn:
@@ -2070,20 +2139,53 @@ class SAXWindow(QMainWindow):
                 signals.log.emit(
                     f"--- Running {STAGE_LABELS.get(key, key)} ---"
                 )
-                self._reset_stage_bars()
+                signals.reset_bars.emit()
                 success = runner.run(key, self.project_number)
                 completed += 1
-                signals.pipeline_progress.emit(completed, total)
+                signals.pipeline_progress.emit(completed, len(stages_list))
                 if not success:
                     signals.log.emit(
                         f"PIPELINE STOPPED — "
                         f"{STAGE_LABELS.get(key, key)} failed."
                     )
                     break
+
+                # After TOT completes, check TOT status and extend pipeline
+                if key == "tot":
+                    info_data = get_info_data(
+                        self.project_root, self.project_number
+                    )
+                    tot = info_data.get("TOT", "").strip()
+                    if tot == "Y":
+                        remaining = ["tot_asce", "tot_lat", "tot_vert"]
+                    else:
+                        remaining = ["asce", "lat", "vert"]
+                    # Only add stages not already in list
+                    for s in remaining:
+                        if s not in stages_list:
+                            stages_list.append(s)
+                    # Rebuild stage buttons for new workflow on main thread
+                    QTimer.singleShot(
+                        0, lambda t=tot: self._finish_load_silent(t)
+                    )
+
             self.running = False
             QTimer.singleShot(0, self._after_run_all)
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def _finish_load_silent(self, tot):
+        """Update workflow badges and stage buttons after TOT determined mid-pipeline."""
+        if tot == "Y":
+            self.tot_badge.setText("⬡  TOT WORKFLOW")
+            self.tot_badge.setStyleSheet(f"color:{YELLOW};")
+            self.active_stages = list(TOT_STAGES)
+            self._build_stage_buttons(TOT_STAGES, enabled=False)
+        else:
+            self.tot_badge.setText("⬡  NORMAL WORKFLOW")
+            self.tot_badge.setStyleSheet(f"color:{BLUE};")
+            self.active_stages = list(NORMAL_STAGES)
+            self._build_stage_buttons(NORMAL_STAGES, enabled=False)
 
     def _after_run_all(self):
         self._re_enable_ui()
@@ -2097,19 +2199,7 @@ class SAXWindow(QMainWindow):
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
-
     window = SAXWindow()
-
-    splash = SAXSplash()
-    splash.show()
-    app.processEvents()
-
-    def on_scan_done(projects):
-        window.populate_projects(projects)
-        splash.close()
-        window.show()
-
-    splash.done.connect(on_scan_done)
-    splash.start()
-
+    window.populate_projects()
+    window.show()
     sys.exit(app.exec())

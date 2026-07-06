@@ -7,18 +7,9 @@ import re
 from config import (
     BASE_FOLDER,
     UI_SUBFOLDER,
-    CONTRACT_SUBFOLDER,
     YEAR_FOLDER_SUFFIX,
     TOT_WEBSITE,
 )
-
-
-# =========================
-# BASE FOLDER
-# =========================
-# =========================
-# PROJECT NUMBER
-# =========================
 
 project_number = sys.argv[1]
 year_prefix    = project_number[:2]
@@ -41,12 +32,11 @@ if project_root == "":
     raise Exception("PROJECT NOT FOUND")
 
 # =========================
-# FIND NEWEST INFO FILE
+# FIND INFO FILE
 # =========================
 
-
-    project_root, "CALCULATIONS", "ARCHIVE"
-)
+ui_folder = os.path.join(project_root, UI_SUBFOLDER)
+os.makedirs(ui_folder, exist_ok=True)
 
 info_path   = ""
 latest_time = 0
@@ -69,21 +59,30 @@ if info_path == "":
 
 print("INFO FILE FOUND")
 
-# =========================
-# READ INFO FILE
-# =========================
-
 with open(info_path, "r", encoding="utf-8") as f:
     info_lines = f.readlines()
 
 project_address = ""
 verified_apn    = ""
+existing_tot    = ""
 
 for line in info_lines:
     if line.startswith("PROJECT_ADDRESS="):
         project_address = line.replace("PROJECT_ADDRESS=", "").strip()
     if line.startswith("VERIFIED_APN="):
         verified_apn = line.replace("VERIFIED_APN=", "").strip()
+    if line.startswith("TOT="):
+        existing_tot = line.replace("TOT=", "").strip()
+
+# =========================
+# SKIP IF ALREADY CONFIRMED
+# =========================
+
+if existing_tot in ("Y", "N"):
+    label = "TOT (Town of Truckee)" if existing_tot == "Y" else "NOT TOT"
+    print(f"TOT already confirmed: {label} — skipping TOT check")
+    print("DONE")
+    sys.exit(0)
 
 # =========================
 # SEARCH VALUE
@@ -96,18 +95,21 @@ else:
     search_value = project_address
     print(f"USING PROJECT ADDRESS: {search_value}")
 
-# =========================
-# HELPER — similarity check
-# =========================
+manual_payload_suffix = f"|{project_address}|{verified_apn}"
 
 def is_close_match(typed, suggestion):
     typed      = typed.lower().strip()
     suggestion = suggestion.lower().strip()
-    # Close if suggestion starts with typed, or typed words all in suggestion
     if suggestion.startswith(typed[:6]):
         return True
     typed_words = typed.split()
     return all(w in suggestion for w in typed_words if len(w) > 3)
+
+def send_manual(msg):
+    print(f"UI_TOT_MANUAL:{msg}{manual_payload_suffix}")
+    sys.stdout.flush()
+    resp = sys.stdin.readline().strip()
+    return resp
 
 # =========================
 # OPEN TOT WEBSITE
@@ -116,212 +118,206 @@ def is_close_match(typed, suggestion):
 print("UI_STEP:Opening TOT website")
 sys.stdout.flush()
 
-website = TOT_WEBSITE
-
-tot_status              = ""
+tot_status               = ""
 verified_project_address = ""
-clicked_suggestion      = False
 
 with sync_playwright() as p:
     browser = p.chromium.launch(headless=False)
     page    = browser.new_page()
 
-    page.goto(website, wait_until="domcontentloaded", timeout=60000)
-    print("WEBSITE OPENED")
-    time.sleep(5)
+    try:
+        page.goto(TOT_WEBSITE, wait_until="domcontentloaded", timeout=60000)
+        print("WEBSITE OPENED")
+        time.sleep(6)
+    except Exception as e:
+        print(f"SITE FAILED TO LOAD: {e}")
+        tot_status = send_manual("TOT website failed to load.")
+        try: browser.close()
+        except: pass
+        # skip to validate below
+        tot_status = tot_status or "N"
 
-    # =========================
-    # FIND FRAME
-    # =========================
-
-    print("UI_STEP:Searching address")
-    sys.stdout.flush()
-
-    target_frame = None
-    for attempt in range(25):
-        for frame in page.frames:
-            try:
-                if frame.locator('div.jimu-popup-action-btn').count() > 0:
-                    target_frame = frame
-                    break
-            except:
-                pass
-        if target_frame:
-            break
-        time.sleep(1)
-
-    if target_frame is None:
-        # Site failed to load properly — go straight to manual override
-        print("UI_TOT_MANUAL:TOT website failed to load. Manual override required.")
-        sys.stdout.flush()
-        response = sys.stdin.readline().strip()
-        tot_status = response  # Y or N
-        print(f"MANUAL TOT STATUS SET: {tot_status}")
-    else:
-        # Close popup
+    if not tot_status:
+        # Scroll page to bring iframe into view
         try:
-            popup_btn = target_frame.locator('div.jimu-popup-action-btn')
-            popup_btn.first.click(force=True, timeout=5000)
-            print("POPUP CLOSED")
-        except:
-            print("NO POPUP TO CLOSE")
-
-        # =========================
-        # TYPE INTO SEARCH BOX
-        # =========================
-
-        search_success = False
-        try:
-            target_frame.wait_for_selector(
-                '#esri_dijit_Search_0_input', timeout=15000
-            )
-            search_box = target_frame.locator('#esri_dijit_Search_0_input')
-            search_box.scroll_into_view_if_needed()
-            search_box.click(force=True)
-            time.sleep(1)
-            search_box.fill(search_value)
-            print(f"TYPED: {search_value}")
+            page.evaluate("window.scrollTo(0, document.body.scrollHeight / 2)")
             time.sleep(2)
-            search_success = True
-        except Exception as e:
-            print(f"SEARCH BOX ERROR: {e}")
+        except:
+            print("SCROLL FAILED — continuing")
 
-        if not search_success:
-            print(f"UI_TOT_MANUAL:Could not interact with search box. We searched for '{search_value}'. Manual override required.")
-            sys.stdout.flush()
-            response   = sys.stdin.readline().strip()
-            tot_status = response
-            print(f"MANUAL TOT STATUS SET: {tot_status}")
-        else:
-            # =========================
-            # CHECK FOR DROPDOWN SUGGESTION
-            # =========================
+        # =========================
+        # FIND FRAME
+        # =========================
 
-            suggestion_text = ""
-            try:
-                suggestion_sel = (
-                    '.searchMenu li, '
-                    '.esri-search__suggestions-list li, '
-                    '[class*="suggest"] li, '
-                    '[class*="search"] ul li'
-                )
-                target_frame.wait_for_selector(
-                    suggestion_sel, timeout=4000
-                )
-                suggestions = target_frame.locator(suggestion_sel)
-                if suggestions.count() > 0:
-                    suggestion_text = suggestions.first.inner_text().strip()
-                    print(f"SUGGESTION FOUND: {suggestion_text}")
-            except:
-                print("NO DROPDOWN SUGGESTION APPEARED")
+        print("UI_STEP:Searching address")
+        sys.stdout.flush()
 
-            if suggestion_text and is_close_match(search_value, suggestion_text):
-                # Close match — click it
+        try:
+            target_frame = None
+            for attempt in range(30):
+                for frame in page.frames:
+                    try:
+                        if frame.locator('div.jimu-popup-action-btn').count() > 0:
+                            target_frame = frame
+                            break
+                        if frame.locator('#esri_dijit_Search_0_input').count() > 0:
+                            target_frame = frame
+                            break
+                    except:
+                        pass
+                if target_frame:
+                    break
+                time.sleep(1)
+
+            if target_frame is None:
+                tot_status = send_manual("TOT website frame not found.")
+            else:
+                # Close popup
                 try:
+                    popup_btn = target_frame.locator('div.jimu-popup-action-btn')
+                    if popup_btn.count() > 0:
+                        popup_btn.first.click(force=True, timeout=5000)
+                        print("POPUP CLOSED")
+                        time.sleep(1)
+                except:
+                    print("NO POPUP TO CLOSE")
+
+                # Scroll within frame
+                try:
+                    target_frame.evaluate("window.scrollTo(0, 0)")
+                    time.sleep(1)
+                except:
+                    pass
+
+                # =========================
+                # TYPE INTO SEARCH BOX
+                # =========================
+
+                search_success = False
+                try:
+                    target_frame.wait_for_selector(
+                        '#esri_dijit_Search_0_input', timeout=20000
+                    )
+                    search_box = target_frame.locator('#esri_dijit_Search_0_input')
+                    search_box.scroll_into_view_if_needed()
+                    time.sleep(1)
+                    search_box.click(force=True)
+                    time.sleep(1)
+                    search_box.type(search_value, delay=80)
+                    print(f"TYPED: {search_value}")
+                    time.sleep(3)
+                    search_success = True
+                except Exception as e:
+                    print(f"SEARCH BOX ERROR: {e}")
+
+                if not search_success:
+                    tot_status = send_manual(
+                        f"Could not interact with search box. "
+                        f"We tried to search for '{search_value}'."
+                    )
+                else:
+                    # Check for dropdown suggestion
+                    suggestion_text    = ""
+                    clicked_suggestion = False
                     suggestion_sel = (
                         '.searchMenu li, '
                         '.esri-search__suggestions-list li, '
                         '[class*="suggest"] li, '
                         '[class*="search"] ul li'
                     )
-                    target_frame.locator(suggestion_sel).first.click(timeout=5000)
-                    clicked_suggestion = True
-                    print(f"CLICKED SUGGESTION: {suggestion_text}")
-                    verified_project_address = suggestion_text
-                except Exception as e:
-                    print(f"COULD NOT CLICK SUGGESTION: {e}")
-                    search_box = target_frame.locator('#esri_dijit_Search_0_input')
-                    search_box.press("Enter")
-                    print("FALLBACK: PRESSED ENTER")
-            else:
-                # No close match or no suggestion — press Enter
-                search_box = target_frame.locator('#esri_dijit_Search_0_input')
-                search_box.press("Enter")
-                print("PRESSED ENTER")
+                    try:
+                        target_frame.wait_for_selector(suggestion_sel, timeout=5000)
+                        suggestions = target_frame.locator(suggestion_sel)
+                        if suggestions.count() > 0:
+                            suggestion_text = suggestions.first.inner_text().strip()
+                            print(f"SUGGESTION FOUND: {suggestion_text}")
+                    except:
+                        print("NO DROPDOWN SUGGESTION APPEARED")
 
-            # =========================
-            # WAIT FOR RESULTS
-            # =========================
+                    if suggestion_text and is_close_match(search_value, suggestion_text):
+                        try:
+                            target_frame.locator(suggestion_sel).first.click(timeout=5000)
+                            clicked_suggestion       = True
+                            verified_project_address = suggestion_text
+                            print(f"CLICKED SUGGESTION: {suggestion_text}")
+                            time.sleep(1)
+                        except Exception as e:
+                            print(f"COULD NOT CLICK SUGGESTION: {e}")
+                            target_frame.locator('#esri_dijit_Search_0_input').press("Enter")
+                    else:
+                        target_frame.locator('#esri_dijit_Search_0_input').press("Enter")
+                        print("PRESSED ENTER")
 
-            print("UI_STEP:Detecting TOT status")
-            sys.stdout.flush()
+                    # =========================
+                    # WAIT FOR RESULTS
+                    # =========================
 
-            time.sleep(8)
-
-            page_text = ""
-            try:
-                page_text = target_frame.locator("body").inner_text()
-            except Exception as e:
-                print(f"COULD NOT READ PAGE: {e}")
-
-            # =========================
-            # DETECT RESULT
-            # =========================
-
-            found_snowload  = "GROUND SNOWLOAD" in page_text.upper()
-            found_no_result = (
-                "no results" in page_text.lower()
-                or "there were no results" in page_text.lower()
-            )
-
-            if found_snowload:
-                tot_status = "Y"
-                print("TOT DETECTED: GROUND SNOWLOAD FOUND")
-
-                # Try to extract verified address from page
-                try:
-                    for line in page_text.split("\n"):
-                        clean = re.sub(r"\s+", " ", line).strip()
-                        has_num    = any(c.isdigit() for c in clean)
-                        has_street = any(
-                            w in clean.upper()
-                            for w in [
-                                "WAY","RD","ROAD","DR","DRIVE","LN","LANE",
-                                "CT","COURT","AVE","AVENUE","BLVD","CIR",
-                                "PLACE","PL","ST","STREET"
-                            ]
-                        )
-                        if has_num and has_street and len(clean) < 100:
-                            verified_project_address = clean
-                            break
-                except:
-                    pass
-
-                # Address mismatch check
-                if (
-                    verified_project_address
-                    and verified_project_address.lower() != project_address.lower()
-                ):
-                    print(f"UI_ADDRESS_MISMATCH:{project_address}|{verified_project_address}")
+                    print("UI_STEP:Detecting TOT status")
                     sys.stdout.flush()
-                    resp = sys.stdin.readline().strip()
-                    if resp != "Y":
-                        verified_project_address = ""
+                    time.sleep(10)
 
-            elif found_no_result:
-                tot_status = "N"
-                print("TOT DETECTED: NO RESULTS — NOT TOT")
+                    page_text = ""
+                    try:
+                        page_text = target_frame.locator("body").inner_text()
+                    except Exception as e:
+                        print(f"COULD NOT READ PAGE: {e}")
 
-            else:
-                # Inconclusive — show manual override
-                if clicked_suggestion:
-                    msg = (
-                        f"Search inconclusive. "
-                        f"We searched for '{search_value}' and clicked '{verified_project_address}' "
-                        f"but could not determine TOT status. Manual override required."
+                    found_snowload  = "GROUND SNOWLOAD" in page_text.upper()
+                    found_no_result = (
+                        "no results" in page_text.lower()
+                        or "there were no results" in page_text.lower()
                     )
-                else:
-                    msg = (
-                        f"We searched for '{search_value}' but results were inconclusive. "
-                        f"Manual override required."
-                    )
-                print(f"UI_TOT_MANUAL:{msg}")
-                sys.stdout.flush()
-                response   = sys.stdin.readline().strip()
-                tot_status = response  # Y or N
-                print(f"MANUAL TOT STATUS SET: {tot_status}")
 
-    browser.close()
+                    if found_snowload:
+                        tot_status = "Y"
+                        print("TOT DETECTED: GROUND SNOWLOAD FOUND")
+                        try:
+                            for line in page_text.split("\n"):
+                                clean = re.sub(r"\s+", " ", line).strip()
+                                has_num    = any(c.isdigit() for c in clean)
+                                has_street = any(
+                                    w in clean.upper() for w in [
+                                        "WAY","RD","ROAD","DR","DRIVE","LN","LANE",
+                                        "CT","COURT","AVE","AVENUE","BLVD","CIR",
+                                        "PLACE","PL","ST","STREET"
+                                    ]
+                                )
+                                if has_num and has_street and len(clean) < 100:
+                                    verified_project_address = clean
+                                    break
+                        except:
+                            pass
+                        if (
+                            verified_project_address
+                            and verified_project_address.lower() != project_address.lower()
+                        ):
+                            print(f"UI_ADDRESS_MISMATCH:{project_address}|{verified_project_address}")
+                            sys.stdout.flush()
+                            resp = sys.stdin.readline().strip()
+                            if resp != "Y":
+                                verified_project_address = ""
+
+                    elif found_no_result:
+                        tot_status = "N"
+                        print("TOT DETECTED: NO RESULTS — NOT TOT")
+
+                    else:
+                        msg = (
+                            f"Search for '{search_value}' returned inconclusive results."
+                        )
+                        tot_status = send_manual(msg)
+
+        except Exception as e:
+            print(f"BROWSER CLOSED OR ERROR: {e}")
+            if not tot_status:
+                tot_status = send_manual(
+                    "Browser was closed or an error occurred."
+                )
+
+        try:
+            browser.close()
+        except:
+            pass
 
 # =========================
 # VALIDATE
@@ -355,7 +351,6 @@ with open(info_path, "w", encoding="utf-8") as f:
 print(f"TOT STATUS UPDATED: {tot_status}")
 if verified_project_address:
     print(f"VERIFIED ADDRESS: {verified_project_address}")
-
 if tot_status == "Y":
     print("TOT REMINDER: EXTRACT SNOW LOAD INFO FROM WEBSITE")
 
