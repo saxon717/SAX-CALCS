@@ -108,24 +108,26 @@ base_folder = (
 script_folder = os.path.dirname(os.path.abspath(__file__))
 
 SCRIPTS = {
-    "info":       "01_info.py",
-    "monday":     "02_monday_contract.py",
-    "apn":        "03_apn.py",
-    "tot":        "04_tot.py",
-    "asce":       "05_asce.py",
-    "lat":        "06_lat.py",
-    "vert":       "07_vert.py",
-    "sync":       "08_sync.py",
-    "notify":     "09_notify.py",
-    "tot_asce":   "tot_asce.py",
-    "tot_lat":    "tot_lat.py",
-    "tot_vert":   "tot_vert.py",
-    "tot_sync":   "tot_sync.py",
-    "tot_notify": "tot_notify.py",
+    "info":         "01_info.py",
+    "monday":       "02_monday_contract.py",
+    "apn":          "03_apn.py",
+    "tot":          "04_tot.py",
+    "asce":         "05_asce.py",
+    "lat":          "06_lat.py",
+    "vert":         "07_vert.py",
+    "sync":         "08_sync.py",
+    "notify":       "09_notify.py",
+    "tot_elev":     "tot_elev.py",
+    "tot_location": "tot_location.py",
+    "tot_seismic":  "tot_seismic.py",
+    "tot_lat":      "tot_lat.py",
+    "tot_vert":     "tot_vert.py",
+    "tot_sync":     "tot_sync.py",
+    "tot_notify":   "tot_notify.py",
 }
 
 NORMAL_STAGES  = ["apn", "tot", "asce", "lat", "vert"]
-TOT_STAGES     = ["tot_asce", "tot_lat", "tot_vert"]
+TOT_STAGES     = ["tot_elev", "tot_location", "tot_seismic", "tot_lat", "tot_vert"]
 DEFAULT_STAGES = NORMAL_STAGES
 
 STAGE_LABELS = {
@@ -138,10 +140,12 @@ STAGE_LABELS = {
     "vert":       "06 — Vertical Calcs",
     "sync":       "07 — Sync",
     "notify":     "08 — Notify",
-    "tot_asce":   "04 — TOT ASCE Hazard Data",
-    "tot_lat":    "05 — TOT Lateral Calcs",
-    "tot_vert":   "06 — TOT Vertical Calcs",
-    "tot_sync":   "07 — TOT Sync",
+    "tot_elev":     "04 — TOT Elevation",
+    "tot_location": "05 — TOT Location Map",
+    "tot_seismic":  "06 — TOT Seismic Data",
+    "tot_lat":      "07 — TOT Lateral Calcs",
+    "tot_vert":     "08 — TOT Vertical Calcs",
+    "tot_sync":    "08 — TOT Sync",
     "tot_notify": "08 — TOT Notify",
 }
 
@@ -151,9 +155,11 @@ DEPENDENCIES = {
     "asce":     ["info", "apn", "tot"],
     "lat":      ["info", "apn", "tot", "asce"],
     "vert":     ["info", "apn", "tot", "asce", "lat"],
-    "tot_asce": ["info"],
-    "tot_lat":  ["info", "tot_asce"],
-    "tot_vert": ["info", "tot_asce", "tot_lat"],
+    "tot_elev":     ["info"],
+    "tot_location": ["info"],
+    "tot_seismic":  ["info"],
+    "tot_lat":      ["info", "tot_elev", "tot_location", "tot_seismic"],
+    "tot_vert":     ["info", "tot_lat"],
     "monday":   ["info"],
     "sync": [], "notify": [], "tot_sync": [], "tot_notify": [],
 }
@@ -181,15 +187,22 @@ SCRIPT_STEPS = {
     "vert":     ["Reading INFO file", "Finding LAT file",
                  "Copying template", "Copying cover data",
                  "Writing snow load", "Saving Excel"],
-    "tot_asce": ["Reading INFO file", "Opening ASCE website",
-                 "Entering address", "Selecting criteria",
-                 "Downloading report", "Saving PDF"],
-    "tot_lat":  ["Reading INFO file", "Finding ASCE PDF",
-                 "Copying template", "Extracting seismic values",
-                 "Extracting wind values", "Writing Excel"],
-    "tot_vert": ["Reading INFO file", "Finding LAT file",
-                 "Copying template", "Copying cover data",
-                 "Writing snow load", "Saving Excel"],
+    "tot_elev":     ["Reading INFO file", "Opening elevation website",
+                     "Searching address", "Extracting elevation",
+                     "Saving screenshot", "Updating INFO file"],
+    "tot_location": ["Reading INFO file", "Opening Google Maps",
+                     "Searching address", "Switching to satellite",
+                     "Taking screenshot", "Updating INFO file"],
+    "tot_seismic":  ["Reading INFO file", "Opening seismic website",
+                     "Selecting ASCE 7-16", "Entering address",
+                     "Waiting for PDF save", "Extracting seismic values",
+                     "Updating INFO file"],
+    "tot_lat":      ["Reading INFO file", "Copying TOT LAT template",
+                     "Writing cover data", "Inserting screenshots",
+                     "Writing seismic values", "Saving Excel"],
+    "tot_vert":     ["Reading INFO file", "Finding TOT LAT file",
+                     "Copying TOT VERT template", "Copying cover data",
+                     "Writing snow load", "Saving Excel"],
 }
 
 # =========================
@@ -214,6 +227,9 @@ class Signals(QObject):
     req_xl_complete     = Signal(str)   # XL files done — pipe-delimited paths
     req_tot_manual      = Signal(str)   # TOT inconclusive or unmatched — manual Y/N
     req_asce_exists     = Signal(str)   # ASCE PDF already found — skip or rerun
+    req_seismic_manual  = Signal(str)   # seismic website open — wait for user to save PDF
+    req_elev_exists     = Signal(str)   # elevation screenshot already exists
+    req_location_exists = Signal(str)   # location screenshot already exists
 
 
 signals = Signals()
@@ -844,6 +860,91 @@ class DependencyDialog(SAXDialog):
 
 
 # =========================
+# ELEVATION EXISTS DIALOG
+# =========================
+
+class ElevExistsDialog(SAXDialog):
+    def __init__(self, parent, path):
+        super().__init__(parent, "Elevation Screenshot Exists")
+        self.main_layout.addWidget(self._title_label("Elevation screenshot already exists."))
+        self.main_layout.addWidget(self._info_box("FILE", os.path.basename(path)))
+        self.main_layout.addWidget(self._body_label("Skip and use existing, or re-run?"))
+        row = QHBoxLayout()
+        row.setSpacing(10)
+        row.addStretch()
+        skip_btn = QPushButton("Skip — Use Existing")
+        skip_btn.setStyleSheet(DIALOG_BTN_BLUE)
+        skip_btn.clicked.connect(lambda: self.done(2))
+        rerun_btn = QPushButton("Re-run")
+        rerun_btn.setStyleSheet(DIALOG_BTN_GREEN)
+        rerun_btn.clicked.connect(self.accept)
+        rerun_btn.setDefault(True)
+        row.addWidget(skip_btn)
+        row.addWidget(rerun_btn)
+        self.main_layout.addLayout(row)
+
+
+# =========================
+# LOCATION EXISTS DIALOG
+# =========================
+
+class LocationExistsDialog(SAXDialog):
+    def __init__(self, parent, path):
+        super().__init__(parent, "Location Screenshot Exists")
+        self.main_layout.addWidget(self._title_label("Location screenshot already exists."))
+        self.main_layout.addWidget(self._info_box("FILE", os.path.basename(path)))
+        self.main_layout.addWidget(self._body_label("Skip and use existing, or re-run?"))
+        row = QHBoxLayout()
+        row.setSpacing(10)
+        row.addStretch()
+        skip_btn = QPushButton("Skip — Use Existing")
+        skip_btn.setStyleSheet(DIALOG_BTN_BLUE)
+        skip_btn.clicked.connect(lambda: self.done(2))
+        rerun_btn = QPushButton("Re-run")
+        rerun_btn.setStyleSheet(DIALOG_BTN_GREEN)
+        rerun_btn.clicked.connect(self.accept)
+        rerun_btn.setDefault(True)
+        row.addWidget(skip_btn)
+        row.addWidget(rerun_btn)
+        self.main_layout.addLayout(row)
+
+
+# =========================
+# SEISMIC MANUAL DIALOG
+# =========================
+
+class SeismicManualDialog(SAXDialog):
+    def __init__(self, parent, pdf_path):
+        super().__init__(parent, "Save Seismic PDF")
+        self.main_layout.addWidget(
+            self._title_label("Seismic website is open.")
+        )
+        self.main_layout.addWidget(
+            self._body_label(
+                "Please search for the project, select ASCE 7-16, "
+                "and print/save the PDF to your CALCULATIONS folder. "
+                "Click Done when the PDF has been saved."
+            )
+        )
+        self.main_layout.addWidget(
+            self._info_box("SAVE PDF TO", pdf_path)
+        )
+        row = QHBoxLayout()
+        row.setSpacing(10)
+        row.addStretch()
+        skip_btn = QPushButton("Skip")
+        skip_btn.setStyleSheet(DIALOG_BTN_GRAY)
+        skip_btn.clicked.connect(lambda: self.done(2))
+        done_btn = QPushButton("Done — PDF Saved")
+        done_btn.setStyleSheet(DIALOG_BTN_GREEN)
+        done_btn.clicked.connect(self.accept)
+        done_btn.setDefault(True)
+        row.addWidget(skip_btn)
+        row.addWidget(done_btn)
+        self.main_layout.addLayout(row)
+
+
+# =========================
 # ASCE EXISTS DIALOG
 # =========================
 
@@ -1239,6 +1340,39 @@ class ScriptRunner(QObject):
                 self._proc.stdin.flush()
                 continue
 
+            # ── ELEVATION EXISTS — skip or rerun ──
+            if line.startswith("UI_ELEV_EXISTS:"):
+                path = line.replace("UI_ELEV_EXISTS:", "").strip()
+                signals.req_elev_exists.emit(path)
+                result = self._wait_for_result(key, timeout=120)
+                if result is None:
+                    return False
+                self._proc.stdin.write(result + "\n")
+                self._proc.stdin.flush()
+                continue
+
+            # ── LOCATION EXISTS — skip or rerun ──
+            if line.startswith("UI_LOCATION_EXISTS:"):
+                path = line.replace("UI_LOCATION_EXISTS:", "").strip()
+                signals.req_location_exists.emit(path)
+                result = self._wait_for_result(key, timeout=120)
+                if result is None:
+                    return False
+                self._proc.stdin.write(result + "\n")
+                self._proc.stdin.flush()
+                continue
+
+            # ── SEISMIC MANUAL — wait for user to save PDF ──
+            if line.startswith("UI_SEISMIC_MANUAL:"):
+                pdf_path = line.replace("UI_SEISMIC_MANUAL:", "").strip()
+                signals.req_seismic_manual.emit(pdf_path)
+                result = self._wait_for_result(key, timeout=600)
+                if result is None:
+                    return False
+                self._proc.stdin.write(result + "\n")
+                self._proc.stdin.flush()
+                continue
+
             # ── ASCE EXISTS — ask skip or rerun ──
             if line.startswith("UI_ASCE_EXISTS:"):
                 filename = line.replace("UI_ASCE_EXISTS:", "").strip()
@@ -1387,6 +1521,9 @@ class SAXWindow(QMainWindow):
         signals.reset_bars.connect(self._reset_stage_bars)
         signals.req_tot_manual.connect(self.handle_tot_manual)
         signals.req_asce_exists.connect(self.handle_asce_exists)
+        signals.req_seismic_manual.connect(self.handle_seismic_manual)
+        signals.req_elev_exists.connect(self.handle_elev_exists)
+        signals.req_location_exists.connect(self.handle_location_exists)
 
         self._build_ui()
         self._build_stage_buttons(DEFAULT_STAGES, enabled=False)
@@ -1435,6 +1572,21 @@ class SAXWindow(QMainWindow):
             runner.put_result("OVERRIDE")
         else:
             runner.put_result("CONFIRMED")
+
+    def handle_elev_exists(self, path):
+        dlg    = ElevExistsDialog(self, path)
+        result = dlg.exec()
+        runner.put_result("SKIP" if result == 2 else "RERUN")
+
+    def handle_location_exists(self, path):
+        dlg    = LocationExistsDialog(self, path)
+        result = dlg.exec()
+        runner.put_result("SKIP" if result == 2 else "RERUN")
+
+    def handle_seismic_manual(self, pdf_path):
+        dlg    = SeismicManualDialog(self, pdf_path)
+        result = dlg.exec()
+        runner.put_result("SKIP" if result == 2 else "DONE")
 
     def handle_asce_exists(self, filename):
         dlg    = ASCEExistsDialog(self, filename)
@@ -2157,7 +2309,7 @@ class SAXWindow(QMainWindow):
                     )
                     tot = info_data.get("TOT", "").strip()
                     if tot == "Y":
-                        remaining = ["tot_asce", "tot_lat", "tot_vert"]
+                        remaining = ["tot_elev", "tot_location", "tot_seismic", "tot_lat", "tot_vert"]
                     else:
                         remaining = ["asce", "lat", "vert"]
                     # Only add stages not already in list

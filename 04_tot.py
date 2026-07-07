@@ -62,9 +62,11 @@ print("INFO FILE FOUND")
 with open(info_path, "r", encoding="utf-8") as f:
     info_lines = f.readlines()
 
-project_address = ""
-verified_apn    = ""
-existing_tot    = ""
+project_address   = ""
+verified_apn      = ""
+existing_tot      = ""
+existing_snow     = ""
+existing_snow_png = ""
 
 for line in info_lines:
     if line.startswith("PROJECT_ADDRESS="):
@@ -73,6 +75,10 @@ for line in info_lines:
         verified_apn = line.replace("VERIFIED_APN=", "").strip()
     if line.startswith("TOT="):
         existing_tot = line.replace("TOT=", "").strip()
+    if line.startswith("TOT_SNOW_LOAD="):
+        existing_snow = line.replace("TOT_SNOW_LOAD=", "").strip()
+    if line.startswith("TOT_SNOW_SCREENSHOT="):
+        existing_snow_png = line.replace("TOT_SNOW_SCREENSHOT=", "").strip()
 
 # =========================
 # SKIP IF ALREADY CONFIRMED
@@ -97,6 +103,10 @@ else:
 
 manual_payload_suffix = f"|{project_address}|{verified_apn}"
 
+snow_screenshot_path = os.path.join(
+    ui_folder, f"{project_number} - TOT Snow Load.png"
+)
+
 def is_close_match(typed, suggestion):
     typed      = typed.lower().strip()
     suggestion = suggestion.lower().strip()
@@ -120,6 +130,7 @@ sys.stdout.flush()
 
 tot_status               = ""
 verified_project_address = ""
+tot_snow_load            = ""
 
 with sync_playwright() as p:
     browser = p.chromium.launch(headless=False)
@@ -134,20 +145,14 @@ with sync_playwright() as p:
         tot_status = send_manual("TOT website failed to load.")
         try: browser.close()
         except: pass
-        # skip to validate below
         tot_status = tot_status or "N"
 
     if not tot_status:
-        # Scroll page to bring iframe into view
         try:
             page.evaluate("window.scrollTo(0, document.body.scrollHeight / 2)")
             time.sleep(2)
         except:
             print("SCROLL FAILED — continuing")
-
-        # =========================
-        # FIND FRAME
-        # =========================
 
         print("UI_STEP:Searching address")
         sys.stdout.flush()
@@ -182,17 +187,13 @@ with sync_playwright() as p:
                 except:
                     print("NO POPUP TO CLOSE")
 
-                # Scroll within frame
                 try:
                     target_frame.evaluate("window.scrollTo(0, 0)")
                     time.sleep(1)
                 except:
                     pass
 
-                # =========================
-                # TYPE INTO SEARCH BOX
-                # =========================
-
+                # Type search
                 search_success = False
                 try:
                     target_frame.wait_for_selector(
@@ -213,10 +214,10 @@ with sync_playwright() as p:
                 if not search_success:
                     tot_status = send_manual(
                         f"Could not interact with search box. "
-                        f"We tried to search for '{search_value}'."
+                        f"Tried to search for '{search_value}'."
                     )
                 else:
-                    # Check for dropdown suggestion
+                    # Check suggestion
                     suggestion_text    = ""
                     clicked_suggestion = False
                     suggestion_sel = (
@@ -248,10 +249,6 @@ with sync_playwright() as p:
                         target_frame.locator('#esri_dijit_Search_0_input').press("Enter")
                         print("PRESSED ENTER")
 
-                    # =========================
-                    # WAIT FOR RESULTS
-                    # =========================
-
                     print("UI_STEP:Detecting TOT status")
                     sys.stdout.flush()
                     time.sleep(10)
@@ -271,6 +268,8 @@ with sync_playwright() as p:
                     if found_snowload:
                         tot_status = "Y"
                         print("TOT DETECTED: GROUND SNOWLOAD FOUND")
+
+                        # Extract values from popup text
                         try:
                             for line in page_text.split("\n"):
                                 clean = re.sub(r"\s+", " ", line).strip()
@@ -287,6 +286,61 @@ with sync_playwright() as p:
                                     break
                         except:
                             pass
+
+                        # Extract snow load value
+                        try:
+                            snow_match = re.search(
+                                r"GROUND SNOWLOAD\s*\(PSF\)\s*(\d+)",
+                                page_text.upper()
+                            )
+                            if snow_match:
+                                tot_snow_load = snow_match.group(1)
+                                print(f"SNOW LOAD EXTRACTED: {tot_snow_load} PSF")
+                            else:
+                                print("WARNING: Could not extract snow load value")
+                        except Exception as e:
+                            print(f"SNOW LOAD EXTRACTION ERROR: {e}")
+
+                        # Click the arrow to expand popup fully then screenshot
+                        try:
+                            expand_btn = target_frame.locator(
+                                '[class*="next"], [class*="arrow"], '
+                                '[title*="next"], [title*="Next"]'
+                            )
+                            if expand_btn.count() > 0:
+                                expand_btn.first.click(force=True)
+                                time.sleep(2)
+                                print("POPUP EXPANDED")
+                        except:
+                            pass
+
+                        # Take screenshot of popup area
+                        try:
+                            popup_el = target_frame.locator(
+                                '[class*="popup"], [class*="infoWindow"], '
+                                '[class*="esriPopup"]'
+                            ).first
+                            if popup_el.count() > 0:
+                                popup_el.screenshot(path=snow_screenshot_path)
+                            else:
+                                # Fall back to full page screenshot
+                                page.screenshot(
+                                    path=snow_screenshot_path,
+                                    full_page=False
+                                )
+                            print(f"SNOW SCREENSHOT SAVED: {snow_screenshot_path}")
+                        except Exception as e:
+                            print(f"SNOW SCREENSHOT FAILED: {e}")
+                            try:
+                                page.screenshot(
+                                    path=snow_screenshot_path,
+                                    full_page=False
+                                )
+                                print(f"FALLBACK SCREENSHOT SAVED: {snow_screenshot_path}")
+                            except:
+                                pass
+
+                        # Address mismatch check
                         if (
                             verified_project_address
                             and verified_project_address.lower() != project_address.lower()
@@ -334,24 +388,33 @@ if tot_status not in ("Y", "N"):
 print("UI_STEP:Updating INFO file")
 sys.stdout.flush()
 
-updated_lines = []
-for line in info_lines:
-    if line.startswith("TOT="):
-        updated_lines.append(f"TOT={tot_status}\n")
-    elif line.startswith("VERIFIED_PROJECT_ADDRESS="):
-        updated_lines.append(
-            f"VERIFIED_PROJECT_ADDRESS={verified_project_address}\n"
-        )
-    else:
-        updated_lines.append(line)
+fields_to_update = {
+    "TOT=":                  tot_status,
+    "VERIFIED_PROJECT_ADDRESS=": verified_project_address,
+    "TOT_SNOW_LOAD=":        tot_snow_load,
+    "TOT_SNOW_SCREENSHOT=":  snow_screenshot_path if os.path.exists(snow_screenshot_path) else "",
+}
+
+updated = list(info_lines)
+for key, val in fields_to_update.items():
+    found = False
+    for i, line in enumerate(updated):
+        if line.startswith(key):
+            updated[i] = f"{key}{val}\n"
+            found = True
+            break
+    if not found:
+        updated.append(f"{key}{val}\n")
 
 with open(info_path, "w", encoding="utf-8") as f:
-    f.writelines(updated_lines)
+    f.writelines(updated)
 
 print(f"TOT STATUS UPDATED: {tot_status}")
+if tot_snow_load:
+    print(f"TOT SNOW LOAD: {tot_snow_load} PSF")
 if verified_project_address:
     print(f"VERIFIED ADDRESS: {verified_project_address}")
 if tot_status == "Y":
-    print("TOT REMINDER: EXTRACT SNOW LOAD INFO FROM WEBSITE")
+    print("TOT REMINDER: SNOW LOAD EXTRACTED AND SAVED TO INFO FILE")
 
 print("DONE")

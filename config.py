@@ -18,6 +18,11 @@ TEMPLATE_FOLDER = (
     r"\4) TEMPLATES\CALC EXCEL TEMPLATES"
 )
 
+TOT_TEMPLATE_FOLDER = (
+    r"C:\Users\saxon\Dropbox\SHEAR FORCE"
+    r"\4) TEMPLATES\CALC EXCEL TEMPLATES\ASCE-7-16 TEMPLATES"
+)
+
 SAX_TEMPLATE_FOLDER = (
     r"C:\Users\saxon\Dropbox\SHEAR FORCE"
     r"\4) TEMPLATES\SAX UI"
@@ -25,7 +30,6 @@ SAX_TEMPLATE_FOLDER = (
 
 # =========================
 # PROJECT SUBFOLDERS
-# (relative to each project root)
 # =========================
 
 UI_SUBFOLDER       = "UI"
@@ -36,19 +40,22 @@ CALC_SUBFOLDER     = "CALCULATIONS"
 # TEMPLATE FILENAMES
 # =========================
 
-LAT_TEMPLATE_NAME  = "SF Lateral Design Template 3.28.26.xlsm"
-VERT_TEMPLATE_NAME = "SF Vertical Package Template"   # partial match
-UI_LOG_NAME        = "UI INTEGRATION LOG.xlsx"
+LAT_TEMPLATE_NAME      = "SF Lateral Design Template 3.28.26.xlsm"
+VERT_TEMPLATE_NAME     = "SF Vertical Package Template"   # partial match
+UI_LOG_NAME            = "UI INTEGRATION LOG.xlsx"
+TOT_LAT_TEMPLATE_NAME  = "LAT XL"          # partial match — finds any file containing this
+TOT_VERT_TEMPLATE_NAME = "VERT XL"         # partial match — finds any file containing this
 
 # =========================
 # WEBSITES
 # =========================
 
-TOT_WEBSITE = "https://www.townoftruckee.com/200/Snow-Load-Design"
+TOT_WEBSITE       = "https://www.townoftruckee.com/200/Snow-Load-Design"
+ELEVATION_WEBSITE = "https://whatismyelevation.com/"
+SEISMIC_WEBSITE   = "https://www.seismicmaps.org/"
 
 # =========================
 # YEAR FOLDER FORMAT
-# e.g. "26-XXX" for project 26-035
 # =========================
 
 YEAR_FOLDER_SUFFIX = "-XXX"
