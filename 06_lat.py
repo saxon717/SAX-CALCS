@@ -363,7 +363,7 @@ print("LAT COMPLETE")
 # EMIT PATH — do NOT close, VERT will handle both
 # =========================
 
-print(f"UI_XL_PATH:{excel_path}")
-sys.stdout.flush()
+# Path stored silently — VERT will emit UI_XL_PATH for both files
+print(f"LAT_PATH:{excel_path}")
 
 print("DONE")

@@ -993,23 +993,28 @@ class TOTManualDialog(SAXDialog):
 # =========================
 
 class XLCompleteDialog(SAXDialog):
-    def __init__(self, parent, paths):
+    def __init__(self, parent, paths, headless=False):
         super().__init__(parent, "XL Files Created")
-        self.paths      = paths        # list of file paths
-        self.keep_open  = []           # paths user wants to keep open
+        self.paths     = paths
+        self.keep_open = []
 
         self.main_layout.addWidget(
             self._title_label("XL files created successfully.")
         )
-        self.main_layout.addWidget(
-            self._body_label("Leave open for review?")
-        )
 
+        if headless:
+            self.main_layout.addWidget(
+                self._body_label("Files were created in the background. Open for review?")
+            )
+        else:
+            self.main_layout.addWidget(
+                self._body_label("Leave open for review?")
+            )
+
+        from PySide6.QtWidgets import QCheckBox
         self.checkboxes = []
         for path in paths:
-            cb = __import__('PySide6.QtWidgets', fromlist=['QCheckBox']).QCheckBox(
-                os.path.basename(path)
-            )
+            cb = QCheckBox(os.path.basename(path))
             cb.setStyleSheet(
                 f"QCheckBox{{color:{TEXT};font-family:Arial;font-size:12px;}}"
                 f"QCheckBox::indicator{{width:16px;height:16px;}}"
@@ -1031,7 +1036,8 @@ class XLCompleteDialog(SAXDialog):
         self.no_btn.setStyleSheet(DIALOG_BTN_RED)
         self.no_btn.clicked.connect(self.reject)
 
-        self.yes_btn = QPushButton("Yes — Leave Open")
+        yes_text = "Yes — Open" if headless else "Yes — Leave Open"
+        self.yes_btn = QPushButton(yes_text)
         self.yes_btn.setStyleSheet(DIALOG_BTN_GREEN)
         self.yes_btn.clicked.connect(self._confirm)
         self.yes_btn.setDefault(True)
@@ -1583,12 +1589,17 @@ class SAXWindow(QMainWindow):
             runner.put_result("NEW")
 
     def handle_xl_complete(self, paths_str):
-        paths  = [p for p in paths_str.split("|") if p.strip()]
-        dlg    = XLCompleteDialog(self, paths)
+        paths = [p for p in paths_str.split("|") if p.strip()]
+        # Read current HEADLESS setting from config
+        try:
+            from config import HEADLESS as _headless
+        except:
+            _headless = False
+        dlg    = XLCompleteDialog(self, paths, headless=_headless)
         result = dlg.exec()
         if result == QDialog.Accepted:
             self.append_log(
-                f"XL files left open: "
+                f"XL files kept: "
                 f"{', '.join(os.path.basename(p) for p in dlg.keep_open)}"
             )
             runner.put_result("KEEP")
@@ -1887,7 +1898,7 @@ class SAXWindow(QMainWindow):
             f"QPushButton:disabled{{background-color:{PANEL};"
             f"color:#553333;border-color:#443333;}}"
         )
-        self.stop_btn.setEnabled(False)
+        self.stop_btn.setEnabled(True)
         self.stop_btn.clicked.connect(self.stop_pipeline)
         btn_row.addStretch()
         btn_row.addWidget(clear_btn)
@@ -1931,7 +1942,7 @@ class SAXWindow(QMainWindow):
             self.stage_buttons[key] = btn
 
     def _re_enable_ui(self):
-        self.stop_btn.setEnabled(False)
+        self.stop_btn.setEnabled(True)
         self.load_btn.setEnabled(True)
         self._stop_clock()
         if not self.running:
@@ -2060,14 +2071,14 @@ class SAXWindow(QMainWindow):
         threading.Thread(target=run_info, daemon=True).start()
 
     def _after_info(self, success):
-        self.stop_btn.setEnabled(False)
+        self.stop_btn.setEnabled(True)
         self.load_btn.setEnabled(True)
         if not success:
             self.append_log("ERROR: INFO stage failed.")
         self._finish_load()
 
     def _finish_load(self):
-        self.stop_btn.setEnabled(False)
+        self.stop_btn.setEnabled(True)
         info_data = get_info_data(self.project_root, self.project_number)
         tot = info_data.get("TOT", "").strip()
         self.tot_status = tot

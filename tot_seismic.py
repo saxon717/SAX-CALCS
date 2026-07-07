@@ -131,11 +131,19 @@ pdf_path   = os.path.join(calculations_folder, pdf_name)
 print("UI_STEP:Opening seismic website")
 sys.stdout.flush()
 
-def run_seismic(headless):
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=headless)
-        context = browser.new_context(accept_downloads=True)
-        page    = context.new_page()
+if HEADLESS:
+    print("Running in background...")
+    sys.stdout.flush()
+
+with sync_playwright() as p:
+    try:
+        browser = p.chromium.launch(headless=HEADLESS)
+    except Exception:
+        print("UI_LOG_WARNING:Headless failed — retrying with visible browser")
+        sys.stdout.flush()
+        browser = p.chromium.launch(headless=False)
+    context = browser.new_context(accept_downloads=True)
+    page    = context.new_page()
 
     try:
         page.goto(SEISMIC_WEBSITE, wait_until="domcontentloaded", timeout=60000)
@@ -165,21 +173,21 @@ def run_seismic(headless):
             time.sleep(6)
         except Exception as e:
             print(f"SEISMIC SEARCH ERROR: {e}")
-            print("Please search manually and save the PDF")
 
-        # Show popup asking user to save PDF and confirm
-        print(f"UI_SEISMIC_MANUAL:{pdf_path}")
-        sys.stdout.flush()
-        response = sys.stdin.readline().strip()
-
-        if response == "DONE":
-            print("PDF CONFIRMED BY USER")
-        else:
-            print("SEISMIC STEP SKIPPED")
-            try: browser.close()
-            except: pass
-            print("DONE")
-            sys.exit(0)
+        # Wait for results to load then save PDF automatically
+        try:
+            print("Waiting for seismic results...")
+            sys.stdout.flush()
+            time.sleep(8)  # Give page time to fully render results
+            page.pdf(
+                path=pdf_path,
+                format="Letter",
+                print_background=True
+            )
+            print(f"SEISMIC PDF SAVED: {pdf_path}")
+            sys.stdout.flush()
+        except Exception as e:
+            print(f"PDF SAVE ERROR: {e}")
 
     except Exception as e:
         print(f"SEISMIC WEBSITE ERROR: {e}")
@@ -188,18 +196,6 @@ def run_seismic(headless):
         browser.close()
     except:
         pass
-
-if HEADLESS:
-    print('Running in background (headless)...')
-    try:
-        run_seismic(headless=True)
-    except Exception as e:
-        print(f'UI_LOG_WARNING:Headless failed ({e}) — retrying with visible browser')
-        sys.stdout.flush()
-        print('WARNING: Retrying with visible browser')
-        run_seismic(headless=False)
-else:
-    run_seismic(headless=False)
 
 # =========================
 # FIND SAVED PDF

@@ -180,11 +180,26 @@ def clean_address(text):
 print("UI_STEP:Opening ASCE website")
 sys.stdout.flush()
 
-def run_asce(headless):
+if HEADLESS:
+    print('Running ASCE in background...')
+def _run_browser(headless):
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=headless)
-        context = browser.new_context(accept_downloads=True)
-        page    = context.new_page()
+        return browser
+
+if HEADLESS:
+    print('Running in background...')
+    sys.stdout.flush()
+
+with sync_playwright() as p:
+    try:
+        browser = p.chromium.launch(headless=HEADLESS)
+    except Exception:
+        print('UI_LOG_WARNING:Headless failed — retrying with visible browser')
+        sys.stdout.flush()
+        browser = p.chromium.launch(headless=False)
+    context = browser.new_context(accept_downloads=True)
+    page    = context.new_page()
 
     page.goto("https://ascehazardtool.org/", timeout=120000)
     print("WEBSITE OPENED")
@@ -350,18 +365,6 @@ def run_asce(headless):
 
     download.save_as(new_final_pdf_path)
     print(f"PDF SAVED: {new_final_pdf_path}")
-
-if HEADLESS:
-    print('Running in background (headless)...')
-    try:
-        run_asce(headless=True)
-    except Exception as e:
-        print(f'UI_LOG_WARNING:Headless failed ({e}) — retrying with visible browser')
-        sys.stdout.flush()
-        print('WARNING: Retrying with visible browser')
-        run_asce(headless=False)
-else:
-    run_asce(headless=False)
 
 print('ASCE COMPLETE')
 print('DONE')

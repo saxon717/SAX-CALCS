@@ -192,6 +192,7 @@ for file in os.listdir(calculations_folder):
         file.endswith(".xlsm")
         and "LAT XL" in upper_file
         and "VERT" not in upper_file
+        and not file.startswith("~$")
     ):
         lat_files.append(file)
 

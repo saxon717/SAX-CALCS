@@ -135,11 +135,25 @@ verified_project_address = ""
 tot_snow_load            = ""
 tot_elevation            = ""
 
-def run_tot(headless):
-    global tot_status, verified_project_address, tot_snow_load, tot_elevation
+if HEADLESS:
+    print('Running TOT in background...')
+def _run_browser(headless):
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=headless)
-        page    = browser.new_page()
+        return browser
+
+if HEADLESS:
+    print('Running in background...')
+    sys.stdout.flush()
+
+with sync_playwright() as p:
+    try:
+        browser = p.chromium.launch(headless=HEADLESS)
+    except Exception:
+        print('UI_LOG_WARNING:Headless failed — retrying with visible browser')
+        sys.stdout.flush()
+        browser = p.chromium.launch(headless=False)
+    page    = browser.new_page()
 
     try:
         page.goto(TOT_WEBSITE, wait_until="domcontentloaded", timeout=60000)

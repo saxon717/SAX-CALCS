@@ -58,6 +58,6 @@ SEISMIC_WEBSITE   = "https://www.seismicmaps.org/"
 # BROWSER SETTINGS
 # =========================
 
-HEADLESS = True  # True = run in background, False = show browser
+HEADLESS = False  # True = run in background, False = show browser
 
 YEAR_FOLDER_SUFFIX = "-XXX"

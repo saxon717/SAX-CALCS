@@ -12,11 +12,8 @@ from config import (
     YEAR_FOLDER_SUFFIX,
     TOT_TEMPLATE_FOLDER,
     TOT_VERT_TEMPLATE_NAME,
+    HEADLESS,
 )
-
-# =========================
-# PROJECT NUMBER
-# =========================
 
 project_number = sys.argv[1]
 year_prefix    = project_number[:2]
@@ -47,10 +44,6 @@ project_name_only = (
     .strip().lstrip("-").strip()
 )
 
-# =========================
-# FIND INFO FILE
-# =========================
-
 ui_folder           = os.path.join(project_root, UI_SUBFOLDER)
 calculations_folder = os.path.join(project_root, CALC_SUBFOLDER)
 
@@ -78,24 +71,42 @@ print("INFO FILE FOUND")
 with open(info_path, "r", encoding="utf-8") as f:
     info_lines = f.readlines()
 
-project_description = ""
-tot_snow_load       = ""
+project_description  = ""
+tot_snow_load        = ""
+elevation            = ""
+snow_screenshot      = ""
+elevation_screenshot = ""
+location_screenshot  = ""
 
 for line in info_lines:
     if line.startswith("PROJECT_DESCRIPTION="):
         project_description = line.replace("PROJECT_DESCRIPTION=", "").strip()
     if line.startswith("TOT_SNOW_LOAD="):
         tot_snow_load = line.replace("TOT_SNOW_LOAD=", "").strip()
+    if line.startswith("ELEVATION="):
+        elevation = line.replace("ELEVATION=", "").strip()
+    if line.startswith("TOT_SNOW_SCREENSHOT="):
+        snow_screenshot = line.replace("TOT_SNOW_SCREENSHOT=", "").strip()
+    if line.startswith("ELEVATION_SCREENSHOT="):
+        elevation_screenshot = line.replace("ELEVATION_SCREENSHOT=", "").strip()
+    if line.startswith("LOCATION_SCREENSHOT="):
+        location_screenshot = line.replace("LOCATION_SCREENSHOT=", "").strip()
 
 project_description = re.sub(r"\s+", " ", project_description).strip()
 word_count          = len(project_description.split())
 good_description    = word_count >= 10
 
+# Extract numeric elevation
+elevation_num = ""
+if elevation:
+    m = re.search(r"([\d,]+)", elevation)
+    if m:
+        elevation_num = m.group(1).replace(",", "")
+
 # =========================
 # FIND TOT VERT TEMPLATE
 # =========================
 
-# Find TOT VERT template by partial name match
 template_path = ""
 for file in os.listdir(TOT_TEMPLATE_FOLDER):
     if (
@@ -110,6 +121,37 @@ if not template_path:
     raise Exception(f"TOT VERT TEMPLATE NOT FOUND IN: {TOT_TEMPLATE_FOLDER}")
 
 print("TOT VERT TEMPLATE FOUND")
+
+# =========================
+# FIND TOT LAT FILE
+# =========================
+
+print("UI_STEP:Finding TOT LAT file")
+sys.stdout.flush()
+
+lat_path  = ""
+lat_files = []
+
+for file in os.listdir(calculations_folder):
+    if (
+        file.endswith(".xlsm")
+        and "TOT LAT XL" in file.upper()
+        and not file.startswith("~$")
+    ):
+        lat_files.append(file)
+
+if not lat_files:
+    raise Exception("TOT LAT WORKBOOK NOT FOUND")
+
+latest_time = 0
+for file in lat_files:
+    full_path     = os.path.join(calculations_folder, file)
+    modified_time = os.path.getmtime(full_path)
+    if modified_time > latest_time:
+        latest_time = modified_time
+        lat_path    = full_path
+
+print(f"TOT LAT FILE FOUND: {os.path.basename(lat_path)}")
 
 # =========================
 # OUTPUT FILE NAME
@@ -127,37 +169,6 @@ while os.path.exists(vert_path):
     counter  += 1
 
 # =========================
-# FIND TOT LAT FILE
-# =========================
-
-print("UI_STEP:Finding TOT LAT file")
-sys.stdout.flush()
-
-lat_path  = ""
-lat_files = []
-
-for file in os.listdir(calculations_folder):
-    upper = file.upper()
-    if (
-        file.endswith(".xlsm")
-        and "TOT LAT XL" in upper
-    ):
-        lat_files.append(file)
-
-if not lat_files:
-    raise Exception("TOT LAT WORKBOOK NOT FOUND")
-
-latest_time = 0
-for file in lat_files:
-    full_path     = os.path.join(calculations_folder, file)
-    modified_time = os.path.getmtime(full_path)
-    if modified_time > latest_time:
-        latest_time = modified_time
-        lat_path    = full_path
-
-print(f"TOT LAT FILE FOUND: {lat_path}")
-
-# =========================
 # COPY TEMPLATE
 # =========================
 
@@ -165,66 +176,119 @@ print("UI_STEP:Copying TOT VERT template")
 sys.stdout.flush()
 
 shutil.copy2(template_path, vert_path)
-print(f"TOT VERT TEMPLATE COPIED: {vert_path}")
+print(f"TOT VERT TEMPLATE COPIED: {os.path.basename(vert_path)}")
 
 # =========================
-# OPEN BOTH FILES
+# OPEN BOTH — hidden until done
 # =========================
 
 print("UI_STEP:Copying cover data")
 sys.stdout.flush()
 
-app = xw.App(visible=True)
+app = xw.App(visible=False)
 app.display_alerts = False
 
 try:
+    # Close any auto-created empty books
+    for book in list(app.books):
+        if book.name.startswith("Book"):
+            try:
+                book.close()
+            except:
+                pass
+
     lat_wb  = app.books.open(os.path.abspath(lat_path))
     vert_wb = app.books.open(os.path.abspath(vert_path))
 
-    lat_cover  = lat_wb.sheets[0]
-    vert_sheet1 = vert_wb.sheets[0]
-    vert_sheet2 = vert_wb.sheets[1]
-    vert_sheet3 = vert_wb.sheets[2]
+    lat_cover   = lat_wb.sheets[0]
+    vert_cover  = vert_wb.sheets["COVER"]
+    criteria_ws = vert_wb.sheets["Criteria"]
+    cal_snow_ws = vert_wb.sheets["California Snow"]
+    location_ws = vert_wb.sheets["Location"]
 
     # Copy cover from TOT LAT
-    vert_sheet1.range("A10").value = lat_cover.range("A10").value
-    vert_sheet1.range("A11").value = lat_cover.range("A11").value
-    vert_sheet1.range("A12").value = lat_cover.range("A12").value
-    vert_sheet1.range("A13").value = lat_cover.range("A13").value
-    vert_sheet1.range("D37").value = lat_cover.range("D35").value
+    vert_cover.range("A10").value = lat_cover.range("A10").value
+    vert_cover.range("A11").value = lat_cover.range("A11").value
+    vert_cover.range("A12").value = lat_cover.range("A12").value
+    vert_cover.range("A13").value = lat_cover.range("A13").value
+    vert_cover.range("D35").value = lat_cover.range("D35").value
     print("TOT LAT COVER DATA COPIED")
 
-    # Update description textbox
-    textbox_updated = False
-    for shape in vert_sheet2.api.Shapes:
-        try:
-            shape_text = shape.TextFrame.Characters().Text
-            if good_description and (
-                "PROJECT DESCRIPTION" in shape_text.upper()
-                or len(shape_text.strip()) > 20
-            ):
-                shape.TextFrame.Characters().Text = project_description
-                textbox_updated = True
-                print("TEXTBOX UPDATED")
-                break
-        except:
-            pass
-
-    # Snow load — update cell reference once you share sheet layout
+    # Criteria sheet — elevation B15, snow load E15
     print("UI_STEP:Writing snow load")
     sys.stdout.flush()
 
-    if tot_snow_load:
-        # TODO: confirm cell for TOT snow load in VERT template
-        print(f"TOT SNOW LOAD: {tot_snow_load} — cell TBD")
+    if elevation_num:
+        criteria_ws.range("B15").value = int(elevation_num)
+        print(f"ELEVATION -> Criteria B15: {elevation_num}")
     else:
-        print("WARNING: No TOT snow load — cell not updated")
+        print("WARNING: No elevation value")
 
-    # Snow load writeback to LAT
-    # TODO: confirm source cell in VERT and destination in LAT
-    print("Snow load writeback to TOT LAT — cell TBD")
+    if tot_snow_load:
+        criteria_ws.range("E15").value = int(tot_snow_load)
+        print(f"SNOW LOAD -> Criteria E15: {tot_snow_load}")
+    else:
+        print("WARNING: No snow load value")
 
-    vert_sheet1.activate()
+    # California Snow sheet — insert screenshots stacked vertically
+    print("Inserting screenshots onto California Snow sheet...")
+    cal_snow_ws.activate()
+    inserted = 0
+
+    if snow_screenshot and os.path.exists(snow_screenshot):
+        try:
+            cal_snow_ws.pictures.add(
+                os.path.abspath(snow_screenshot),
+                top=cal_snow_ws.range("A3").top,
+                left=cal_snow_ws.range("A3").left,
+                width=400, height=200,
+            )
+            print("SNOW SCREENSHOT INSERTED")
+            inserted += 1
+        except Exception as e:
+            print(f"SNOW SCREENSHOT INSERT FAILED: {e}")
+    else:
+        print("WARNING: Snow screenshot not found")
+
+    if elevation_screenshot and os.path.exists(elevation_screenshot):
+        try:
+            cal_snow_ws.pictures.add(
+                os.path.abspath(elevation_screenshot),
+                top=cal_snow_ws.range("A15").top,
+                left=cal_snow_ws.range("A15").left,
+                width=400, height=200,
+            )
+            print("ELEVATION SCREENSHOT INSERTED")
+            inserted += 1
+        except Exception as e:
+            print(f"ELEVATION SCREENSHOT INSERT FAILED: {e}")
+    else:
+        print("WARNING: Elevation screenshot not found")
+
+    print(f"California Snow: {inserted}/2 screenshots inserted")
+
+    # Location sheet — Google Maps screenshot
+    print("Inserting location screenshot...")
+    location_ws.activate()
+    if location_screenshot and os.path.exists(location_screenshot):
+        try:
+            location_ws.pictures.add(
+                os.path.abspath(location_screenshot),
+                top=location_ws.range("A3").top,
+                left=location_ws.range("A3").left,
+                width=620, height=480,
+            )
+            print("LOCATION SCREENSHOT INSERTED")
+        except Exception as e:
+            print(f"LOCATION SCREENSHOT INSERT FAILED: {e}")
+    else:
+        print("WARNING: Location screenshot not found")
+
+    # Snow load writeback to LAT W!B6 — TBD cell confirmation
+    print("Snow load writeback to TOT LAT W!B6 — TBD")
+
+    # Navigate to cover and save both
+    vert_cover.activate()
     vert_wb.app.api.ActiveWindow.ScrollRow    = 1
     vert_wb.app.api.ActiveWindow.ScrollColumn = 1
 
@@ -233,21 +297,30 @@ try:
 
     vert_wb.save()
     lat_wb.save()
-    print(f"TOT VERT SAVED: {vert_path}")
-    print(f"TOT LAT SAVED: {lat_path}")
+    print(f"TOT VERT SAVED: {os.path.basename(vert_path)}")
+    print(f"TOT LAT SAVED: {os.path.basename(lat_path)}")
+
+    # =========================
+    # REVEAL FILES + POPUP
+    # If HEADLESS: keep hidden, popup asks to open
+    # If not HEADLESS: make visible, popup asks to leave open
+    # =========================
 
     print(f"UI_XL_PATH:{lat_path}")
     print(f"UI_XL_PATH:{vert_path}")
     sys.stdout.flush()
 
     response = sys.stdin.readline().strip()
-    if response == "CLOSE":
+
+    if response == "KEEP":
+        # Make visible so user can see them
+        app.visible = True
+        print("XL FILES REVEALED FOR REVIEW")
+    else:
         lat_wb.close()
         vert_wb.close()
         app.quit()
         print("XL FILES CLOSED")
-    else:
-        print("XL FILES LEFT OPEN FOR REVIEW")
 
 except Exception as e:
     try: lat_wb.close()
