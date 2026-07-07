@@ -11,6 +11,7 @@ from config import (
     UI_SUBFOLDER,
     CALC_SUBFOLDER,
     YEAR_FOLDER_SUFFIX,
+    HEADLESS,
 )
 
 # =========================
@@ -179,11 +180,11 @@ def clean_address(text):
 print("UI_STEP:Opening ASCE website")
 sys.stdout.flush()
 
-with sync_playwright() as p:
-
-    browser = p.chromium.launch(headless=False)
-    context = browser.new_context(accept_downloads=True)
-    page    = context.new_page()
+def run_asce(headless):
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=headless)
+        context = browser.new_context(accept_downloads=True)
+        page    = context.new_page()
 
     page.goto("https://ascehazardtool.org/", timeout=120000)
     print("WEBSITE OPENED")
@@ -350,5 +351,17 @@ with sync_playwright() as p:
     download.save_as(new_final_pdf_path)
     print(f"PDF SAVED: {new_final_pdf_path}")
 
-print("ASCE COMPLETE")
-print("DONE")
+if HEADLESS:
+    print('Running in background (headless)...')
+    try:
+        run_asce(headless=True)
+    except Exception as e:
+        print(f'UI_LOG_WARNING:Headless failed ({e}) — retrying with visible browser')
+        sys.stdout.flush()
+        print('WARNING: Retrying with visible browser')
+        run_asce(headless=False)
+else:
+    run_asce(headless=False)
+
+print('ASCE COMPLETE')
+print('DONE')

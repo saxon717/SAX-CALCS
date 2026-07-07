@@ -9,6 +9,7 @@ from config import (
     UI_SUBFOLDER,
     YEAR_FOLDER_SUFFIX,
     TOT_WEBSITE,
+    HEADLESS,
 )
 
 project_number = sys.argv[1]
@@ -134,9 +135,11 @@ verified_project_address = ""
 tot_snow_load            = ""
 tot_elevation            = ""
 
-with sync_playwright() as p:
-    browser = p.chromium.launch(headless=False)
-    page    = browser.new_page()
+def run_tot(headless):
+    global tot_status, verified_project_address, tot_snow_load, tot_elevation
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=headless)
+        page    = browser.new_page()
 
     try:
         page.goto(TOT_WEBSITE, wait_until="domcontentloaded", timeout=60000)

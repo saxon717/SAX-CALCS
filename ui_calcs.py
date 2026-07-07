@@ -1355,6 +1355,12 @@ class ScriptRunner(QObject):
                 self._proc.stdin.flush()
                 continue
 
+            # ── WARNING LOG — show in yellow in status log ──
+            if line.startswith("UI_LOG_WARNING:"):
+                msg = line.replace("UI_LOG_WARNING:", "").strip()
+                signals.log.emit(f"WARNING: {msg}")
+                continue
+
             # ── UPLOAD AUTO — file not on Monday, upload immediately ──
             if line.startswith("UI_UPLOAD_AUTO:"):
                 filename = line.replace("UI_UPLOAD_AUTO:", "").strip()
@@ -1781,6 +1787,21 @@ class SAXWindow(QMainWindow):
         self.refresh_btn.clicked.connect(self.refresh_projects)
         ll.addWidget(self.refresh_btn)
 
+        self.headless_btn = QPushButton("⬛  Work in Background: OFF")
+        self.headless_btn.setCheckable(True)
+        self.headless_btn.setChecked(False)
+        self.headless_btn.setStyleSheet(
+            f"QPushButton{{background-color:{BTN_DEFAULT};"
+            f"color:{SUBTEXT};border:1px solid #333355;"
+            f"border-radius:6px;padding:6px;"
+            f"font-family:Arial;font-size:11px;}}"
+            f"QPushButton:checked{{background-color:#1A3A2A;"
+            f"color:{GREEN};border-color:{GREEN};}}"
+            f"QPushButton:hover{{color:{TEXT};border-color:{BORDER};}}"
+        )
+        self.headless_btn.clicked.connect(self.toggle_headless)
+        ll.addWidget(self.headless_btn)
+
         root.addWidget(left)
 
         # RIGHT PANEL
@@ -1974,6 +1995,26 @@ class SAXWindow(QMainWindow):
         """User picked a project from the dropdown."""
         text = self.project_input.itemText(index)
         self.project_input.lineEdit().setText(text.split(" — ")[0].strip())
+
+    def toggle_headless(self):
+        checked = self.headless_btn.isChecked()
+        # Update config.py on disk
+        config_path = os.path.join(script_folder, "config.py")
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                content = f.read()
+            if checked:
+                content = content.replace("HEADLESS = False", "HEADLESS = True")
+                self.headless_btn.setText("🟢  Work in Background: ON")
+                self.append_log("Work in Background: ON — browsers will run silently")
+            else:
+                content = content.replace("HEADLESS = True", "HEADLESS = False")
+                self.headless_btn.setText("⬛  Work in Background: OFF")
+                self.append_log("Work in Background: OFF — browsers will be visible")
+            with open(config_path, "w", encoding="utf-8") as f:
+                f.write(content)
+        except Exception as e:
+            self.append_log(f"ERROR: Could not update config: {e}")
 
     def open_project_folder(self):
         if self.project_root and os.path.exists(self.project_root):

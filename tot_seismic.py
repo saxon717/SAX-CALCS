@@ -13,6 +13,7 @@ from config import (
     CALC_SUBFOLDER,
     YEAR_FOLDER_SUFFIX,
     SEISMIC_WEBSITE,
+    HEADLESS,
 )
 
 # =========================
@@ -130,10 +131,11 @@ pdf_path   = os.path.join(calculations_folder, pdf_name)
 print("UI_STEP:Opening seismic website")
 sys.stdout.flush()
 
-with sync_playwright() as p:
-    browser = p.chromium.launch(headless=False)
-    context = browser.new_context(accept_downloads=True)
-    page    = context.new_page()
+def run_seismic(headless):
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=headless)
+        context = browser.new_context(accept_downloads=True)
+        page    = context.new_page()
 
     try:
         page.goto(SEISMIC_WEBSITE, wait_until="domcontentloaded", timeout=60000)
@@ -186,6 +188,18 @@ with sync_playwright() as p:
         browser.close()
     except:
         pass
+
+if HEADLESS:
+    print('Running in background (headless)...')
+    try:
+        run_seismic(headless=True)
+    except Exception as e:
+        print(f'UI_LOG_WARNING:Headless failed ({e}) — retrying with visible browser')
+        sys.stdout.flush()
+        print('WARNING: Retrying with visible browser')
+        run_seismic(headless=False)
+else:
+    run_seismic(headless=False)
 
 # =========================
 # FIND SAVED PDF

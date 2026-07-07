@@ -10,6 +10,7 @@ from config import (
     BASE_FOLDER,
     UI_SUBFOLDER,
     YEAR_FOLDER_SUFFIX,
+    HEADLESS,
 )
 
 project_number = sys.argv[1]
@@ -142,68 +143,87 @@ maps_url = (
     f"/data=!3m1!1e3"
 )
 
-with sync_playwright() as p:
-    browser = p.chromium.launch(headless=False)
-    page    = browser.new_page(viewport={"width": 1280, "height": 900})
-
-    try:
-        page.goto(maps_url, wait_until="domcontentloaded", timeout=30000)
-        print("SATELLITE MAP OPENED")
-
-        # Accept cookies if prompted
+def run_maps(headless):
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=headless)
+        page    = browser.new_page(viewport={"width": 1280, "height": 900})
         try:
-            page.locator('button:has-text("Accept all"), form[action*="consent"] button').first.click()
-        except:
-            pass
+            page.goto(maps_url, wait_until="domcontentloaded", timeout=30000)
+            print("SATELLITE MAP OPENED")
 
-        # Wait for map canvas to render
-        try:
-            page.wait_for_selector("canvas", timeout=8000)
+            # Accept cookies if prompted
+            try:
+                page.locator('button:has-text("Accept all"), form[action*="consent"] button').first.click()
+            except:
+                pass
+
+            # Wait for map canvas to render
+            try:
+                page.wait_for_selector("canvas", timeout=8000)
+                time.sleep(1)
+                print("MAP RENDERED")
+            except:
+                time.sleep(2)
+
+            # Close left panel
+            try:
+                page.evaluate("""
+                    var btn = document.querySelector(
+                        'body > div:nth-child(5) > div.lbMcOd.eZfyae.xcUKcd.y2Sqzf.Nkjr6c.K1N2o.y2iKwd.cSgCkb > div.UL7Qtf > div.g2LZJb > div > div > div.gYkzb > button > span'
+                    );
+                    if (btn) btn.click();
+                """)
+                time.sleep(0.5)
+                print("LEFT PANEL CLOSED")
+            except Exception as e:
+                print(f"PANEL CLOSE: {e}")
+
             time.sleep(1)
-            print("MAP RENDERED")
-        except:
-            time.sleep(2)
 
-        # Close left panel
-        try:
-            page.evaluate("""
-                var btn = document.querySelector(
-                    'body > div:nth-child(5) > div.lbMcOd.eZfyae.xcUKcd.y2Sqzf.Nkjr6c.K1N2o.y2iKwd.cSgCkb > div.UL7Qtf > div.g2LZJb > div > div > div.gYkzb > button > span'
-                );
-                if (btn) btn.click();
-            """)
-            time.sleep(0.5)
-            print("LEFT PANEL CLOSED")
+            print("UI_STEP:Taking screenshot")
+            sys.stdout.flush()
+
+            page.screenshot(path=screenshot_path, full_page=False)
+
+            # Crop UI chrome
+            try:
+                from PIL import Image
+                img     = Image.open(screenshot_path)
+                w, h    = img.size
+                cropped = img.crop((80, 55, w - 80, h - 130))
+                cropped.save(screenshot_path)
+                print(f"LOCATION SCREENSHOT SAVED: {screenshot_path}")
+            except Exception as e:
+                print(f"CROP SKIPPED: {e}")
+                print(f"LOCATION SCREENSHOT SAVED: {screenshot_path}")
+
+            return True
+
         except Exception as e:
-            print(f"PANEL CLOSE: {e}")
+            print(f"GOOGLE MAPS ERROR: {e}")
+            return False
+        finally:
+            try:
+                browser.close()
+            except:
+                pass
 
-        # Short wait for panel animation then screenshot
-        time.sleep(1)
 
-        print("UI_STEP:Taking screenshot")
+# Try headless first if enabled, fallback to visible
+success = False
+if HEADLESS:
+    print("Running in background (headless)...")
+    success = run_maps(headless=True)
+    if not success:
+        print("UI_LOG_WARNING:Headless failed — retrying with visible browser")
         sys.stdout.flush()
+        print("WARNING: Headless mode failed — retrying with visible browser")
+        success = run_maps(headless=False)
+else:
+    success = run_maps(headless=False)
 
-        page.screenshot(path=screenshot_path, full_page=False)
-
-        # Crop UI chrome
-        try:
-            from PIL import Image
-            img     = Image.open(screenshot_path)
-            w, h    = img.size
-            cropped = img.crop((80, 55, w - 80, h - 130))
-            cropped.save(screenshot_path)
-            print(f"LOCATION SCREENSHOT SAVED: {screenshot_path}")
-        except Exception as e:
-            print(f"CROP SKIPPED: {e}")
-            print(f"LOCATION SCREENSHOT SAVED: {screenshot_path}")
-
-    except Exception as e:
-        print(f"GOOGLE MAPS ERROR: {e}")
-
-    try:
-        browser.close()
-    except:
-        pass
+if not success:
+    raise Exception("GOOGLE MAPS SCREENSHOT FAILED")
 
 # =========================
 # UPDATE INFO FILE

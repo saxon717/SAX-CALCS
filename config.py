@@ -55,7 +55,9 @@ ELEVATION_WEBSITE = "https://whatismyelevation.com/"
 SEISMIC_WEBSITE   = "https://www.seismicmaps.org/"
 
 # =========================
-# YEAR FOLDER FORMAT
+# BROWSER SETTINGS
 # =========================
+
+HEADLESS = True  # True = run in background, False = show browser
 
 YEAR_FOLDER_SUFFIX = "-XXX"
