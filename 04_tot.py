@@ -392,17 +392,36 @@ with sync_playwright() as p:
                                     bar_box  = bar.bounding_box()
                                     data_box = data.bounding_box()
                                     if bar_box and data_box:
+                                        full_width = max(bar_box["width"], data_box["width"])
                                         clip = {
                                             "x":      min(bar_box["x"], data_box["x"]),
                                             "y":      bar_box["y"],
-                                            "width":  max(bar_box["width"], data_box["width"]),
+                                            "width":  int(full_width * 2 / 5),
                                             "height": (data_box["y"] + data_box["height"]) - bar_box["y"],
                                         }
                                         page.screenshot(path=snow_screenshot_path, clip=clip)
-                                        print(f"SNOW SCREENSHOT SAVED: {snow_screenshot_path}")
                                     else:
                                         page.screenshot(path=snow_screenshot_path, full_page=False)
-                                        print(f"SNOW SCREENSHOT SAVED (full page): {snow_screenshot_path}")
+
+                                    # Crop whitespace below three dots
+                                    try:
+                                        from PIL import Image
+                                        img    = Image.open(snow_screenshot_path).convert("RGB")
+                                        bottom = 0
+                                        for y in range(img.height - 1, 0, -1):
+                                            row = [img.getpixel((x, y)) for x in range(img.width)]
+                                            if any(r < 245 or g < 245 or b < 245 for r, g, b in row):
+                                                bottom = y + 15
+                                                break
+                                        if bottom > 0:
+                                            img = img.crop((0, 0, img.width, min(bottom, img.height)))
+                                            img.save(snow_screenshot_path)
+                                            print(f"SNOW SCREENSHOT CROPPED AND SAVED: {snow_screenshot_path}")
+                                        else:
+                                            print(f"SNOW SCREENSHOT SAVED: {snow_screenshot_path}")
+                                    except Exception as ce:
+                                        print(f"CROP SKIPPED: {ce}")
+                                        print(f"SNOW SCREENSHOT SAVED: {snow_screenshot_path}")
                                 except Exception as e:
                                     print(f"POPUP SCREENSHOT FAILED: {e} — using full page")
                                     page.screenshot(path=snow_screenshot_path, full_page=False)

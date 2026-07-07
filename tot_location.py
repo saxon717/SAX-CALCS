@@ -2,14 +2,15 @@ from playwright.sync_api import sync_playwright
 import os
 import sys
 import time
+import urllib.parse
+import urllib.request
+import json
 
 from config import (
     BASE_FOLDER,
     UI_SUBFOLDER,
     YEAR_FOLDER_SUFFIX,
 )
-
-GOOGLE_MAPS_URL = "https://www.google.com/maps"
 
 project_number = sys.argv[1]
 year_prefix    = project_number[:2]
@@ -58,11 +59,10 @@ print("INFO FILE FOUND")
 with open(info_path, "r", encoding="utf-8") as f:
     info_lines = f.readlines()
 
-project_address    = ""
-city               = ""
-state              = ""
-zip_code           = ""
-location_png       = ""
+project_address = ""
+city            = ""
+state           = ""
+zip_code        = ""
 
 for line in info_lines:
     if line.startswith("PROJECT_ADDRESS="):
@@ -73,11 +73,9 @@ for line in info_lines:
         state = line.replace("STATE=", "").strip()
     if line.startswith("ZIP_CODE="):
         zip_code = line.replace("ZIP_CODE=", "").strip()
-    if line.startswith("LOCATION_SCREENSHOT="):
-        location_png = line.replace("LOCATION_SCREENSHOT=", "").strip()
 
 # =========================
-# SKIP IF SCREENSHOT ALREADY EXISTS
+# SKIP IF EXISTS
 # =========================
 
 screenshot_path = os.path.join(ui_folder, f"{project_number} - Location.png")
@@ -101,89 +99,103 @@ if state:
 if zip_code:
     search_address += f" {zip_code}"
 
-print(f"SEARCHING LOCATION FOR: {search_address}")
+print(f"LOCATION: {search_address}")
 
 # =========================
-# OPEN GOOGLE MAPS SATELLITE
+# GET COORDINATES VIA NOMINATIM (free, no API key)
+# =========================
+
+print("UI_STEP:Getting coordinates")
+sys.stdout.flush()
+
+lat = lng = None
+try:
+    encoded  = urllib.parse.quote(search_address)
+    geo_url  = f"https://nominatim.openstreetmap.org/search?q={encoded}&format=json&limit=1"
+    req      = urllib.request.Request(geo_url, headers={"User-Agent": "SAX/1.0"})
+    response = urllib.request.urlopen(req, timeout=10)
+    results  = json.loads(response.read())
+    if results:
+        lat = results[0]["lat"]
+        lng = results[0]["lon"]
+        print(f"COORDINATES: {lat}, {lng}")
+    else:
+        print("NO COORDINATES FOUND")
+except Exception as e:
+    print(f"GEOCODE ERROR: {e}")
+
+if not lat or not lng:
+    raise Exception("COULD NOT GET COORDINATES — cannot proceed")
+
+# =========================
+# OPEN GOOGLE MAPS SATELLITE DIRECTLY
 # =========================
 
 print("UI_STEP:Opening Google Maps")
 sys.stdout.flush()
 
-import urllib.parse
-encoded = urllib.parse.quote(search_address)
-maps_url = f"https://www.google.com/maps/search/{encoded}/@?entry=ttu"
+encoded_addr = urllib.parse.quote(search_address)
+# Build satellite URL directly with pin + coords + zoom
+maps_url = (
+    f"https://www.google.com/maps/search/{encoded_addr}/"
+    f"@{lat},{lng},18z"
+    f"/data=!3m1!1e3"
+)
 
 with sync_playwright() as p:
     browser = p.chromium.launch(headless=False)
     page    = browser.new_page(viewport={"width": 1280, "height": 900})
 
     try:
-        page.goto(maps_url, wait_until="domcontentloaded", timeout=60000)
-        print("GOOGLE MAPS OPENED")
-        time.sleep(5)
+        page.goto(maps_url, wait_until="domcontentloaded", timeout=30000)
+        print("SATELLITE MAP OPENED")
 
         # Accept cookies if prompted
         try:
-            page.locator('button:has-text("Accept all"), button:has-text("Accept"), [aria-label*="Accept"]').first.click(force=True)
-            time.sleep(1)
+            page.locator('button:has-text("Accept all"), form[action*="consent"] button').first.click()
         except:
             pass
 
-        print("UI_STEP:Switching to satellite view")
-        sys.stdout.flush()
-
-        # Switch to satellite view
+        # Wait for map canvas to render
         try:
-            # Click the layers button
-            layers_btn = page.locator(
-                '[aria-label="Layers"], button:has-text("Layers"), '
-                '[data-value="satellite"], [jsaction*="satellite"]'
-            ).first
-            layers_btn.click(force=True)
+            page.wait_for_selector("canvas", timeout=8000)
+            time.sleep(1)
+            print("MAP RENDERED")
+        except:
             time.sleep(2)
 
-            # Click satellite option
-            sat_btn = page.locator(
-                '[aria-label*="Satellite"], [data-value="satellite"], '
-                'img[alt*="Satellite"], [jsaction*="satellite"]'
-            ).first
-            sat_btn.click(force=True)
-            time.sleep(3)
-            print("SATELLITE VIEW ACTIVATED")
-        except Exception as e:
-            print(f"SATELLITE SWITCH FAILED: {e} — using current view")
-
-        # Set zoom — look for zoom controls
+        # Close left panel
         try:
-            # Zoom in a bit for neighbourhood level
-            zoom_in = page.locator('[aria-label="Zoom in"], button[title="Zoom in"]').first
-            for _ in range(2):
-                zoom_in.click(force=True)
-                time.sleep(0.8)
-            print("ZOOM ADJUSTED")
-        except:
-            pass
+            page.evaluate("""
+                var btn = document.querySelector(
+                    'body > div:nth-child(5) > div.lbMcOd.eZfyae.xcUKcd.y2Sqzf.Nkjr6c.K1N2o.y2iKwd.cSgCkb > div.UL7Qtf > div.g2LZJb > div > div > div.gYkzb > button > span'
+                );
+                if (btn) btn.click();
+            """)
+            time.sleep(0.5)
+            print("LEFT PANEL CLOSED")
+        except Exception as e:
+            print(f"PANEL CLOSE: {e}")
 
-        time.sleep(3)
+        # Short wait for panel animation then screenshot
+        time.sleep(1)
 
         print("UI_STEP:Taking screenshot")
         sys.stdout.flush()
 
-        # Hide UI elements for cleaner screenshot then take it
-        try:
-            page.evaluate("""
-                document.querySelectorAll(
-                    '.searchbox, #searchbox, #omnibox-container, '
-                    + '.widget-scene-canvas, [class*="search-input"]'
-                ).forEach(el => el.style.opacity = '0');
-            """)
-            time.sleep(1)
-        except:
-            pass
-
         page.screenshot(path=screenshot_path, full_page=False)
-        print(f"LOCATION SCREENSHOT SAVED: {screenshot_path}")
+
+        # Crop UI chrome
+        try:
+            from PIL import Image
+            img     = Image.open(screenshot_path)
+            w, h    = img.size
+            cropped = img.crop((80, 55, w - 80, h - 130))
+            cropped.save(screenshot_path)
+            print(f"LOCATION SCREENSHOT SAVED: {screenshot_path}")
+        except Exception as e:
+            print(f"CROP SKIPPED: {e}")
+            print(f"LOCATION SCREENSHOT SAVED: {screenshot_path}")
 
     except Exception as e:
         print(f"GOOGLE MAPS ERROR: {e}")
@@ -216,5 +228,5 @@ if not found:
 with open(info_path, "w", encoding="utf-8") as f:
     f.writelines(updated)
 
-print(f"LOCATION SCREENSHOT WRITTEN TO INFO")
+print("LOCATION SCREENSHOT WRITTEN TO INFO")
 print("DONE")

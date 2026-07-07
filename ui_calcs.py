@@ -2219,14 +2219,14 @@ class SAXWindow(QMainWindow):
                             f"ERROR: {STAGE_LABELS.get(m, m)} failed."
                         )
 
-            self.stop_btn.setEnabled(True)
-            btn = self.stage_buttons.get(key)
-            if btn:
-                btn.set_running()
-            threading.Thread(
-                target=run_dep_then, daemon=True
-            ).start()
-            return
+                self.stop_btn.setEnabled(True)
+                btn = self.stage_buttons.get(key)
+                if btn:
+                    btn.set_running()
+                threading.Thread(
+                    target=run_dep_then, daemon=True
+                ).start()
+                return
 
         btn = self.stage_buttons.get(key)
         if btn:
