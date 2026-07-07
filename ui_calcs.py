@@ -117,7 +117,6 @@ SCRIPTS = {
     "vert":         "07_vert.py",
     "sync":         "08_sync.py",
     "notify":       "09_notify.py",
-    "tot_elev":     "tot_elev.py",
     "tot_location": "tot_location.py",
     "tot_seismic":  "tot_seismic.py",
     "tot_lat":      "tot_lat.py",
@@ -127,7 +126,7 @@ SCRIPTS = {
 }
 
 NORMAL_STAGES  = ["apn", "tot", "asce", "lat", "vert"]
-TOT_STAGES     = ["tot_elev", "tot_location", "tot_seismic", "tot_lat", "tot_vert"]
+TOT_STAGES     = ["tot_location", "tot_seismic", "tot_lat", "tot_vert"]
 DEFAULT_STAGES = NORMAL_STAGES
 
 STAGE_LABELS = {
@@ -140,7 +139,6 @@ STAGE_LABELS = {
     "vert":       "06 — Vertical Calcs",
     "sync":       "07 — Sync",
     "notify":     "08 — Notify",
-    "tot_elev":     "04 — TOT Elevation",
     "tot_location": "05 — TOT Location Map",
     "tot_seismic":  "06 — TOT Seismic Data",
     "tot_lat":      "07 — TOT Lateral Calcs",
@@ -155,10 +153,9 @@ DEPENDENCIES = {
     "asce":     ["info", "apn", "tot"],
     "lat":      ["info", "apn", "tot", "asce"],
     "vert":     ["info", "apn", "tot", "asce", "lat"],
-    "tot_elev":     ["info"],
     "tot_location": ["info"],
     "tot_seismic":  ["info"],
-    "tot_lat":      ["info", "tot_elev", "tot_location", "tot_seismic"],
+    "tot_lat":      ["info", "tot_location", "tot_seismic"],
     "tot_vert":     ["info", "tot_lat"],
     "monday":   ["info"],
     "sync": [], "notify": [], "tot_sync": [], "tot_notify": [],
@@ -187,9 +184,6 @@ SCRIPT_STEPS = {
     "vert":     ["Reading INFO file", "Finding LAT file",
                  "Copying template", "Copying cover data",
                  "Writing snow load", "Saving Excel"],
-    "tot_elev":     ["Reading INFO file", "Opening elevation website",
-                     "Searching address", "Extracting elevation",
-                     "Saving screenshot", "Updating INFO file"],
     "tot_location": ["Reading INFO file", "Opening Google Maps",
                      "Searching address", "Switching to satellite",
                      "Taking screenshot", "Updating INFO file"],
@@ -228,7 +222,6 @@ class Signals(QObject):
     req_tot_manual      = Signal(str)   # TOT inconclusive or unmatched — manual Y/N
     req_asce_exists     = Signal(str)   # ASCE PDF already found — skip or rerun
     req_seismic_manual  = Signal(str)   # seismic website open — wait for user to save PDF
-    req_elev_exists     = Signal(str)   # elevation screenshot already exists
     req_location_exists = Signal(str)   # location screenshot already exists
 
 
@@ -860,31 +853,6 @@ class DependencyDialog(SAXDialog):
 
 
 # =========================
-# ELEVATION EXISTS DIALOG
-# =========================
-
-class ElevExistsDialog(SAXDialog):
-    def __init__(self, parent, path):
-        super().__init__(parent, "Elevation Screenshot Exists")
-        self.main_layout.addWidget(self._title_label("Elevation screenshot already exists."))
-        self.main_layout.addWidget(self._info_box("FILE", os.path.basename(path)))
-        self.main_layout.addWidget(self._body_label("Skip and use existing, or re-run?"))
-        row = QHBoxLayout()
-        row.setSpacing(10)
-        row.addStretch()
-        skip_btn = QPushButton("Skip — Use Existing")
-        skip_btn.setStyleSheet(DIALOG_BTN_BLUE)
-        skip_btn.clicked.connect(lambda: self.done(2))
-        rerun_btn = QPushButton("Re-run")
-        rerun_btn.setStyleSheet(DIALOG_BTN_GREEN)
-        rerun_btn.clicked.connect(self.accept)
-        rerun_btn.setDefault(True)
-        row.addWidget(skip_btn)
-        row.addWidget(rerun_btn)
-        self.main_layout.addLayout(row)
-
-
-# =========================
 # LOCATION EXISTS DIALOG
 # =========================
 
@@ -1343,17 +1311,6 @@ class ScriptRunner(QObject):
                 self._proc.stdin.flush()
                 continue
 
-            # ── ELEVATION EXISTS — skip or rerun ──
-            if line.startswith("UI_ELEV_EXISTS:"):
-                path = line.replace("UI_ELEV_EXISTS:", "").strip()
-                signals.req_elev_exists.emit(path)
-                result = self._wait_for_result(key, timeout=120)
-                if result is None:
-                    return False
-                self._proc.stdin.write(result + "\n")
-                self._proc.stdin.flush()
-                continue
-
             # ── LOCATION EXISTS — skip or rerun ──
             if line.startswith("UI_LOCATION_EXISTS:"):
                 path = line.replace("UI_LOCATION_EXISTS:", "").strip()
@@ -1525,7 +1482,6 @@ class SAXWindow(QMainWindow):
         signals.req_tot_manual.connect(self.handle_tot_manual)
         signals.req_asce_exists.connect(self.handle_asce_exists)
         signals.req_seismic_manual.connect(self.handle_seismic_manual)
-        signals.req_elev_exists.connect(self.handle_elev_exists)
         signals.req_location_exists.connect(self.handle_location_exists)
 
         self._build_ui()
@@ -1575,11 +1531,6 @@ class SAXWindow(QMainWindow):
             runner.put_result("OVERRIDE")
         else:
             runner.put_result("CONFIRMED")
-
-    def handle_elev_exists(self, path):
-        dlg    = ElevExistsDialog(self, path)
-        result = dlg.exec()
-        runner.put_result("SKIP" if result == 2 else "RERUN")
 
     def handle_location_exists(self, path):
         dlg    = LocationExistsDialog(self, path)
@@ -1764,25 +1715,33 @@ class SAXWindow(QMainWindow):
         )
         ll.addWidget(self.upload_btn)
 
-        # Standalone APN + TOT buttons — always available after project load
-        apn_tot_row = QHBoxLayout()
-        apn_tot_row.setSpacing(4)
-
-        self.apn_btn = QPushButton("▶  APN")
-        self.apn_btn.setMinimumHeight(36)
-        self.apn_btn.setStyleSheet(BUTTON_BASE)
+        self.apn_btn = QPushButton("▶▶  APN VERIFICATION")
+        self.apn_btn.setMinimumHeight(42)
+        self.apn_btn.setStyleSheet(
+            f"QPushButton{{background-color:{BTN_DEFAULT};color:{TEXT};"
+            f"border:1px solid {BORDER};border-radius:8px;padding:11px 16px;"
+            f"font-family:Arial;font-size:13px;font-weight:bold;text-align:left;}}"
+            f"QPushButton:hover{{background-color:{BTN_HOVER};border-color:{BLUE};}}"
+            f"QPushButton:disabled{{background-color:#2A2A3E;"
+            f"color:{SUBTEXT};border-color:#333355;}}"
+        )
         self.apn_btn.setEnabled(False)
         self.apn_btn.clicked.connect(lambda: self.run_single("apn", force=True))
-        apn_tot_row.addWidget(self.apn_btn)
+        ll.addWidget(self.apn_btn)
 
-        self.tot_btn = QPushButton("▶  TOT")
-        self.tot_btn.setMinimumHeight(36)
-        self.tot_btn.setStyleSheet(BUTTON_BASE)
+        self.tot_btn = QPushButton("▶▶  TOT VERIFICATION")
+        self.tot_btn.setMinimumHeight(42)
+        self.tot_btn.setStyleSheet(
+            f"QPushButton{{background-color:{BTN_DEFAULT};color:{TEXT};"
+            f"border:1px solid {BORDER};border-radius:8px;padding:11px 16px;"
+            f"font-family:Arial;font-size:13px;font-weight:bold;text-align:left;}}"
+            f"QPushButton:hover{{background-color:{BTN_HOVER};border-color:{BLUE};}}"
+            f"QPushButton:disabled{{background-color:#2A2A3E;"
+            f"color:{SUBTEXT};border-color:#333355;}}"
+        )
         self.tot_btn.setEnabled(False)
         self.tot_btn.clicked.connect(lambda: self.run_single("tot", force=True))
-        apn_tot_row.addWidget(self.tot_btn)
-
-        ll.addLayout(apn_tot_row)
+        ll.addWidget(self.tot_btn)
 
         self.setup_calcs_btn = SplitButton("SETUP CALCS")
         self.setup_calcs_btn.set_enabled(False)
@@ -2226,37 +2185,39 @@ class SAXWindow(QMainWindow):
         if key in COMING_SOON:
             return
 
-        ok, missing = self._check_dependencies(key)
-        if not ok:
-            missing_label = STAGE_LABELS.get(missing, missing)
-            stage_label   = STAGE_LABELS.get(key, key)
-            dlg = DependencyDialog(self, stage_label, missing_label)
-            if dlg.exec() != QDialog.Accepted:
-                return
+        # When force=True skip dependency check entirely
+        if not force:
+            ok, missing = self._check_dependencies(key)
+            if not ok:
+                missing_label = STAGE_LABELS.get(missing, missing)
+                stage_label   = STAGE_LABELS.get(key, key)
+                dlg = DependencyDialog(self, stage_label, missing_label)
+                if dlg.exec() != QDialog.Accepted:
+                    return
 
-            def run_dep_then(m=missing, k=key):
-                dep_btn = self.stage_buttons.get(m)
-                if dep_btn:
-                    dep_btn.set_running()
-                signals.log.emit(
-                    f"--- Running {STAGE_LABELS.get(m, m)} first ---"
-                )
-                signals.reset_bars.emit()
-                suc = runner.run(m, self.project_number)
-                if suc:
-                    self.completed_stages.add(m)
-                    tgt = self.stage_buttons.get(k)
-                    if tgt:
-                        tgt.set_running()
+                def run_dep_then(m=missing, k=key):
+                    dep_btn = self.stage_buttons.get(m)
+                    if dep_btn:
+                        dep_btn.set_running()
                     signals.log.emit(
-                        f"--- Now running {STAGE_LABELS.get(k, k)} ---"
+                        f"--- Running {STAGE_LABELS.get(m, m)} first ---"
                     )
                     signals.reset_bars.emit()
-                    runner.run(k, self.project_number)
-                else:
-                    signals.log.emit(
-                        f"ERROR: {STAGE_LABELS.get(m, m)} failed."
-                    )
+                    suc = runner.run(m, self.project_number)
+                    if suc:
+                        self.completed_stages.add(m)
+                        tgt = self.stage_buttons.get(k)
+                        if tgt:
+                            tgt.set_running()
+                        signals.log.emit(
+                            f"--- Now running {STAGE_LABELS.get(k, k)} ---"
+                        )
+                        signals.reset_bars.emit()
+                        runner.run(k, self.project_number)
+                    else:
+                        signals.log.emit(
+                            f"ERROR: {STAGE_LABELS.get(m, m)} failed."
+                        )
 
             self.stop_btn.setEnabled(True)
             btn = self.stage_buttons.get(key)
@@ -2338,7 +2299,7 @@ class SAXWindow(QMainWindow):
                     )
                     tot = info_data.get("TOT", "").strip()
                     if tot == "Y":
-                        remaining = ["tot_elev", "tot_location", "tot_seismic", "tot_lat", "tot_vert"]
+                        remaining = ["tot_location", "tot_seismic", "tot_lat", "tot_vert"]
                     else:
                         remaining = ["asce", "lat", "vert"]
                     # Only add stages not already in list

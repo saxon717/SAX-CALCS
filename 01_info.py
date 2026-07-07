@@ -91,15 +91,17 @@ if len(existing_infos) > 0:
     elif response == "OVERWRITE":
         print("OVERWRITING OLDEST INFO FILE")
         info_path = existing_infos[-1]
+        # Read preserved values from all files, use first non-blank found
         try:
-            with open(existing_infos[0], "r", encoding="utf-8") as f:
-                for line in f:
-                    if line.startswith("TOT="):
-                        existing_tot = line.replace("TOT=", "").strip()
-                    if line.startswith("VERIFIED_APN="):
-                        existing_verified_apn = line.replace("VERIFIED_APN=", "").strip()
-                    if line.startswith("MONDAY_UPLOADED="):
-                        existing_monday = line.replace("MONDAY_UPLOADED=", "").strip()
+            for src_file in existing_infos:
+                with open(src_file, "r", encoding="utf-8") as f:
+                    for line in f:
+                        if line.startswith("TOT=") and not existing_tot:
+                            existing_tot = line.replace("TOT=", "").strip()
+                        if line.startswith("VERIFIED_APN=") and not existing_verified_apn:
+                            existing_verified_apn = line.replace("VERIFIED_APN=", "").strip()
+                        if line.startswith("MONDAY_UPLOADED=") and not existing_monday:
+                            existing_monday = line.replace("MONDAY_UPLOADED=", "").strip()
         except:
             pass
 

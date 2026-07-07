@@ -132,6 +132,7 @@ sys.stdout.flush()
 tot_status               = ""
 verified_project_address = ""
 tot_snow_load            = ""
+tot_elevation            = ""
 
 with sync_playwright() as p:
     browser = p.chromium.launch(headless=False)
@@ -207,7 +208,7 @@ with sync_playwright() as p:
                     time.sleep(1)
                     search_box.type(search_value, delay=80)
                     print(f"TYPED: {search_value}")
-                    time.sleep(3)
+                    time.sleep(2)
                     search_success = True
                 except Exception as e:
                     print(f"SEARCH BOX ERROR: {e}")
@@ -252,7 +253,7 @@ with sync_playwright() as p:
 
                     print("UI_STEP:Detecting TOT status")
                     sys.stdout.flush()
-                    time.sleep(10)
+                    time.sleep(6)
 
                     page_text = ""
                     try:
@@ -302,44 +303,120 @@ with sync_playwright() as p:
                         except Exception as e:
                             print(f"SNOW LOAD EXTRACTION ERROR: {e}")
 
-                        # Click the arrow to expand popup fully then screenshot
+                        # Click next arrow — this navigates to snow load page
+                        next_sel = (
+                            "#map_root > div.esriPopupMobile > "
+                            "div.sizer > div > div.titleButton.arrow"
+                        )
+                        clicked_next = False
                         try:
-                            expand_btn = target_frame.locator(
-                                '[class*="next"], [class*="arrow"], '
-                                '[title*="next"], [title*="Next"]'
-                            )
-                            if expand_btn.count() > 0:
-                                expand_btn.first.click(force=True)
-                                time.sleep(2)
-                                print("POPUP EXPANDED")
-                        except:
-                            pass
-
-                        # Take screenshot of popup area
-                        try:
-                            popup_el = target_frame.locator(
-                                '[class*="popup"], [class*="infoWindow"], '
-                                '[class*="esriPopup"]'
-                            ).first
-                            if popup_el.count() > 0:
-                                popup_el.screenshot(path=snow_screenshot_path)
+                            next_btn = page.locator(next_sel)
+                            if next_btn.count() > 0:
+                                next_btn.first.click(force=True)
+                                print("NEXT BUTTON CLICKED — waiting for snow load page")
+                                clicked_next = True
                             else:
-                                # Fall back to full page screenshot
-                                page.screenshot(
-                                    path=snow_screenshot_path,
-                                    full_page=False
-                                )
-                            print(f"SNOW SCREENSHOT SAVED: {snow_screenshot_path}")
+                                next_btn = target_frame.locator(next_sel)
+                                if next_btn.count() > 0:
+                                    next_btn.first.click(force=True)
+                                    print("NEXT BUTTON CLICKED (frame) — waiting for snow load page")
+                                    clicked_next = True
+                                else:
+                                    print("NEXT BUTTON NOT FOUND")
                         except Exception as e:
-                            print(f"SNOW SCREENSHOT FAILED: {e}")
+                            print(f"NEXT BUTTON CLICK FAILED: {e}")
+
+                        next_sel = (
+                            "#map_root > div.esriPopupMobile > "
+                            "div.sizer > div > div.titleButton.arrow"
+                        )
+                        clicked_next = False
+
+                        try:
+                            # Use JS click to bypass visibility check
+                            result = target_frame.evaluate(f"""
+                                var btn = document.querySelector("{next_sel.replace('"', "'")}");
+                                if (btn) {{ btn.click(); true; }} else {{ false; }}
+                            """)
+                            if result:
+                                print("NEXT BUTTON CLICKED (JS — frame)")
+                                clicked_next = True
+                            else:
+                                # Try on main page
+                                result = page.evaluate(f"""
+                                    var btn = document.querySelector("{next_sel.replace('"', "'")}");
+                                    if (btn) {{ btn.click(); true; }} else {{ false; }}
+                                """)
+                                if result:
+                                    print("NEXT BUTTON CLICKED (JS — page)")
+                                    clicked_next = True
+                                else:
+                                    print("NEXT BUTTON NOT FOUND IN DOM")
+                        except Exception as e:
+                            print(f"NEXT BUTTON JS CLICK FAILED: {e}")
+
+                        if clicked_next:
+                            time.sleep(2)
+
+                            # Data and popup are in the same frame
                             try:
-                                page.screenshot(
-                                    path=snow_screenshot_path,
-                                    full_page=False
-                                )
-                                print(f"FALLBACK SCREENSHOT SAVED: {snow_screenshot_path}")
-                            except:
-                                pass
+                                target_frame.wait_for_selector(".esriViewPopup", timeout=6000)
+                                print("POPUP LOADED IN FRAME")
+
+                                # Extract data from table
+                                attr_names  = target_frame.locator(".attrName").all_inner_texts()
+                                attr_values = target_frame.locator(".attrValue").all_inner_texts()
+                                attrs = dict(zip(
+                                    [n.strip().upper() for n in attr_names],
+                                    [v.strip() for v in attr_values]
+                                ))
+                                print(f"POPUP DATA: {attrs}")
+
+                                for key in attrs:
+                                    if "SNOWLOAD" in key or "SNOW LOAD" in key:
+                                        tot_snow_load = attrs[key].replace(",", "")
+                                        print(f"SNOW LOAD EXTRACTED: {tot_snow_load} PSF")
+                                        break
+
+                                for key in attrs:
+                                    if "ELEVATION" in key:
+                                        tot_elevation = attrs[key].replace(",", "")
+                                        print(f"ELEVATION EXTRACTED: {tot_elevation} FT")
+                                        break
+
+                                # Screenshot full popup — blue bar + data + dots
+                                try:
+                                    # Get bounding boxes and clip
+                                    bar  = target_frame.locator("body > div:nth-child(11) > div > div > div.esriMobileNavigationItem.center").first
+                                    data = target_frame.locator("body > div:nth-child(12)").first
+                                    bar_box  = bar.bounding_box()
+                                    data_box = data.bounding_box()
+                                    if bar_box and data_box:
+                                        clip = {
+                                            "x":      min(bar_box["x"], data_box["x"]),
+                                            "y":      bar_box["y"],
+                                            "width":  max(bar_box["width"], data_box["width"]),
+                                            "height": (data_box["y"] + data_box["height"]) - bar_box["y"],
+                                        }
+                                        page.screenshot(path=snow_screenshot_path, clip=clip)
+                                        print(f"SNOW SCREENSHOT SAVED: {snow_screenshot_path}")
+                                    else:
+                                        page.screenshot(path=snow_screenshot_path, full_page=False)
+                                        print(f"SNOW SCREENSHOT SAVED (full page): {snow_screenshot_path}")
+                                except Exception as e:
+                                    print(f"POPUP SCREENSHOT FAILED: {e} — using full page")
+                                    page.screenshot(path=snow_screenshot_path, full_page=False)
+                                    print(f"FALLBACK SCREENSHOT SAVED: {snow_screenshot_path}")
+
+                            except Exception as e:
+                                print(f"FRAME DATA ERROR: {e} — using full page screenshot")
+                                try:
+                                    page.screenshot(path=snow_screenshot_path, full_page=False)
+                                    print(f"FALLBACK SCREENSHOT SAVED: {snow_screenshot_path}")
+                                except Exception as e2:
+                                    print(f"SCREENSHOT FAILED: {e2}")
+                        else:
+                            print("WARNING: Could not click next button — skipping screenshot and data")
 
                         # Address mismatch check
                         if (
@@ -393,6 +470,7 @@ fields_to_update = {
     "TOT=":                  tot_status,
     "VERIFIED_PROJECT_ADDRESS=": verified_project_address,
     "TOT_SNOW_LOAD=":        tot_snow_load,
+    "ELEVATION=":            tot_elevation,
     "TOT_SNOW_SCREENSHOT=":  snow_screenshot_path if os.path.exists(snow_screenshot_path) else "",
 }
 
