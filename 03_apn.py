@@ -8,6 +8,7 @@ from config import (
     YEAR_FOLDER_SUFFIX,
 )
 project_number = sys.argv[1]
+force_rerun    = len(sys.argv) > 2 and sys.argv[2] == "--force"
 year_prefix    = project_number[:2]
 year_folder    = os.path.join(BASE_FOLDER, f"{year_prefix}{YEAR_FOLDER_SUFFIX}")
 
@@ -67,12 +68,12 @@ for line in info_lines:
         contract_pdf = line.replace("CONTRACT_PDF=", "").strip()
 
 # Skip if already verified OR if APN already confirmed and populated
-if verified_apn:
+if verified_apn and not force_rerun:
     print(f"APN already verified: {verified_apn} — skipping")
     print("DONE")
     sys.exit(0)
 
-if existing_apn:
+if existing_apn and not force_rerun:
     # Auto-confirm existing APN without asking
     print(f"APN found: {existing_apn} — auto-confirming")
     verified_apn = existing_apn

@@ -12,6 +12,7 @@ from config import (
 )
 
 project_number = sys.argv[1]
+force_rerun    = len(sys.argv) > 2 and sys.argv[2] == "--force"
 year_prefix    = project_number[:2]
 year_folder    = os.path.join(BASE_FOLDER, f"{year_prefix}{YEAR_FOLDER_SUFFIX}")
 
@@ -84,7 +85,7 @@ for line in info_lines:
 # SKIP IF ALREADY CONFIRMED
 # =========================
 
-if existing_tot in ("Y", "N"):
+if existing_tot in ("Y", "N") and not force_rerun:
     label = "TOT (Town of Truckee)" if existing_tot == "Y" else "NOT TOT"
     print(f"TOT already confirmed: {label} — skipping TOT check")
     print("DONE")

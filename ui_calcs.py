@@ -335,19 +335,19 @@ def find_project(project_number):
     return None, None
 
 def get_info_data(project_root, project_number):
-    archive_folder = os.path.join(project_root, "CALCULATIONS", "ARCHIVE")
-    if not os.path.exists(archive_folder):
+    ui_folder = os.path.join(project_root, "UI")
+    if not os.path.exists(ui_folder):
         return {}
     latest_time = 0
-    info_path = ""
-    for file in os.listdir(archive_folder):
+    info_path   = ""
+    for file in os.listdir(ui_folder):
         upper = file.upper()
         if file.endswith(".txt") and "INFO" in upper and project_number in upper:
-            full_path = os.path.join(archive_folder, file)
+            full_path = os.path.join(ui_folder, file)
             t = os.path.getmtime(full_path)
             if t > latest_time:
                 latest_time = t
-                info_path = full_path
+                info_path   = full_path
     if not info_path:
         return {}
     data = {}
@@ -1225,7 +1225,7 @@ class ScriptRunner(QObject):
             signals.stage_done.emit(key, False)
             return None
 
-    def run(self, key, project_number):
+    def run(self, key, project_number, force=False):
         self._stopped = False
         path = os.path.join(script_folder, SCRIPTS.get(key, ""))
 
@@ -1239,8 +1239,11 @@ class ScriptRunner(QObject):
         step_index = [0]
 
         try:
+            cmd = [sys.executable, "-u", path, project_number]
+            if force:
+                cmd.append("--force")
             self._proc = subprocess.Popen(
-                [sys.executable, "-u", path, project_number],
+                cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 stdin=subprocess.PIPE,
@@ -1761,6 +1764,26 @@ class SAXWindow(QMainWindow):
         )
         ll.addWidget(self.upload_btn)
 
+        # Standalone APN + TOT buttons — always available after project load
+        apn_tot_row = QHBoxLayout()
+        apn_tot_row.setSpacing(4)
+
+        self.apn_btn = QPushButton("▶  APN")
+        self.apn_btn.setMinimumHeight(36)
+        self.apn_btn.setStyleSheet(BUTTON_BASE)
+        self.apn_btn.setEnabled(False)
+        self.apn_btn.clicked.connect(lambda: self.run_single("apn", force=True))
+        apn_tot_row.addWidget(self.apn_btn)
+
+        self.tot_btn = QPushButton("▶  TOT")
+        self.tot_btn.setMinimumHeight(36)
+        self.tot_btn.setStyleSheet(BUTTON_BASE)
+        self.tot_btn.setEnabled(False)
+        self.tot_btn.clicked.connect(lambda: self.run_single("tot", force=True))
+        apn_tot_row.addWidget(self.tot_btn)
+
+        ll.addLayout(apn_tot_row)
+
         self.setup_calcs_btn = SplitButton("SETUP CALCS")
         self.setup_calcs_btn.set_enabled(False)
         self.setup_calcs_btn.run_clicked.connect(self.run_all)
@@ -1935,6 +1958,8 @@ class SAXWindow(QMainWindow):
             self.setup_calcs_btn.set_enabled(True)
             self.upload_btn.setEnabled(True)
             self.open_project_btn.setEnabled(True)
+            self.apn_btn.setEnabled(True)
+            self.tot_btn.setEnabled(True)
             for btn in self.stage_buttons.values():
                 if btn.key not in COMING_SOON:
                     btn.set_enabled_active(True)
@@ -2021,6 +2046,8 @@ class SAXWindow(QMainWindow):
         self.setup_calcs_btn.set_enabled(False)
         self.upload_btn.setEnabled(False)
         self.open_project_btn.setEnabled(False)
+        self.apn_btn.setEnabled(False)
+        self.tot_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
         self._reset_stage_bars()
 
@@ -2066,6 +2093,8 @@ class SAXWindow(QMainWindow):
         self.setup_calcs_btn.set_enabled(True)
         self.upload_btn.setEnabled(True)
         self.open_project_btn.setEnabled(True)
+        self.apn_btn.setEnabled(True)
+        self.tot_btn.setEnabled(True)
 
     # =========================
     # PROGRESS & CLOCK
@@ -2190,7 +2219,7 @@ class SAXWindow(QMainWindow):
     # RUN SINGLE
     # =========================
 
-    def run_single(self, key):
+    def run_single(self, key, force=False):
         if not self.project_number:
             self.append_log("ERROR: No project loaded.")
             return
@@ -2248,7 +2277,7 @@ class SAXWindow(QMainWindow):
         self.stop_btn.setEnabled(True)
 
         def worker():
-            runner.run(key, self.project_number)
+            runner.run(key, self.project_number, force=force)
 
         threading.Thread(target=worker, daemon=True).start()
 
