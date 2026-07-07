@@ -1,11 +1,9 @@
 from playwright.sync_api import sync_playwright
-from difflib import SequenceMatcher
 import os
 import sys
-import re
 import time
+import re
 import pdfplumber
-from datetime import datetime
 
 from config import (
     BASE_FOLDER,
@@ -15,10 +13,6 @@ from config import (
     SEISMIC_WEBSITE,
     HEADLESS,
 )
-
-# =========================
-# PROJECT NUMBER
-# =========================
 
 project_number = sys.argv[1]
 year_prefix    = project_number[:2]
@@ -48,10 +42,6 @@ project_name_only = (
     .replace(project_number, "")
     .strip().lstrip("-").strip()
 )
-
-# =========================
-# FIND INFO FILE
-# =========================
 
 ui_folder           = os.path.join(project_root, UI_SUBFOLDER)
 calculations_folder = os.path.join(project_root, CALC_SUBFOLDER)
@@ -116,16 +106,17 @@ if zip_code:
 print(f"SEISMIC SEARCH ADDRESS: {search_address}")
 
 # =========================
-# OUTPUT PDF NAME
+# PDF NAME
 # =========================
 
-today      = datetime.now()
-date_str   = f"{today.month}.{today.day}.{str(today.year)[2:]}"
-pdf_name   = f"{project_number} {project_name_only} - SeismicDesignReport - {date_str}.pdf"
-pdf_path   = os.path.join(calculations_folder, pdf_name)
+from datetime import datetime
+today    = datetime.now()
+date_str = f"{today.month}.{today.day}.{str(today.year)[2:]}"
+pdf_name = f"{project_number} {project_name_only} - SeismicDesignReport - {date_str}.pdf"
+pdf_path = os.path.join(calculations_folder, pdf_name)
 
 # =========================
-# OPEN SEISMIC WEBSITE
+# OPEN SEISMIC WEBSITE — always headless for page.pdf()
 # =========================
 
 print("UI_STEP:Opening seismic website")
@@ -137,20 +128,21 @@ if HEADLESS:
 
 with sync_playwright() as p:
     try:
-        browser = p.chromium.launch(headless=HEADLESS)
+        browser = p.chromium.launch(headless=True)
     except Exception:
         print("UI_LOG_WARNING:Headless failed — retrying with visible browser")
         sys.stdout.flush()
         browser = p.chromium.launch(headless=False)
+
     context = browser.new_context(accept_downloads=True)
     page    = context.new_page()
 
     try:
         page.goto(SEISMIC_WEBSITE, wait_until="domcontentloaded", timeout=60000)
         print("SEISMIC WEBSITE OPENED")
-        time.sleep(4)
+        time.sleep(3)
 
-        # Select ASCE 7-16 using correct dropdown ID and value
+        # Select ASCE 7-16
         try:
             page.wait_for_selector('#dcrd', timeout=10000)
             page.select_option('#dcrd', value='asce7-16')
@@ -159,26 +151,26 @@ with sync_playwright() as p:
         except Exception as e:
             print(f"ASCE 7-16 SELECT FAILED: {e}")
 
-        # Enter address using correct class selectors
+        # Enter address
         try:
             page.wait_for_selector('.searchbox', timeout=10000)
             search_box = page.locator('.searchbox').first
             search_box.click(force=True)
-            time.sleep(1)
+            time.sleep(0.5)
             search_box.fill(search_address)
             print(f"TYPED: {search_address}")
-            time.sleep(2)
+            time.sleep(1)
             page.locator('.searchbutton').first.click(force=True)
             print("SEARCH SUBMITTED")
-            time.sleep(6)
+            time.sleep(8)
         except Exception as e:
             print(f"SEISMIC SEARCH ERROR: {e}")
 
-        # Wait for results to load then save PDF automatically
+        # Save PDF
         try:
-            print("Waiting for seismic results...")
+            print("Saving seismic PDF...")
             sys.stdout.flush()
-            time.sleep(8)  # Give page time to fully render results
+            time.sleep(3)
             page.pdf(
                 path=pdf_path,
                 format="Letter",
@@ -198,23 +190,20 @@ with sync_playwright() as p:
         pass
 
 # =========================
-# FIND SAVED PDF
+# EXTRACT VALUES FROM PDF
 # =========================
 
 print("UI_STEP:Extracting seismic values")
 sys.stdout.flush()
 
-# Find most recent seismic PDF in calculations folder
 seismic_pdf = ""
 latest_time = 0
 
 for file in os.listdir(calculations_folder):
     if (
         file.endswith(".pdf")
-        and (
-            "seismic" in file.lower()
-            or "SeismicDesign" in file
-        )
+        and "SeismicDesignReport" in file
+        and not file.startswith("~$")
     ):
         full_path     = os.path.join(calculations_folder, file)
         modified_time = os.path.getmtime(full_path)
@@ -229,53 +218,54 @@ if not seismic_pdf:
 
 print(f"SEISMIC PDF FOUND: {seismic_pdf}")
 
-# =========================
-# EXTRACT VALUES FROM PDF
-# =========================
-
-ss_value         = ""
-sms_value        = ""
-sds_value        = ""
-s1_value         = ""
-sm1_value        = ""
-sd1_value        = ""
-seismic_category = ""
-
+# Extract all text from PDF
+full_text = ""
 try:
     with pdfplumber.open(seismic_pdf) as pdf:
-        # Try page 3 first (same as ASCE), fall back to page 1
-        for page_num in [2, 0, 1]:
-            if page_num >= len(pdf.pages):
-                continue
-            text  = pdf.pages[page_num].extract_text()
-            if not text:
-                continue
-            lines = text.split("\n")
-            for i, line in enumerate(lines):
-                if "MS S" in line:
-                    prev  = lines[i - 1].split()
-                    sms_value = prev[2] if len(prev) > 2 else ""
-                    ss_value  = prev[-1] if prev else ""
-                if "M1 1" in line:
-                    prev  = lines[i - 1].split()
-                    sm1_value = prev[2] if len(prev) > 2 else ""
-                    s1_value  = prev[-1] if prev else ""
-                if "DS S30" in line:
-                    prev  = lines[i - 1].split()
-                    sds_value = prev[2] if len(prev) > 2 else ""
-                if "D1" in line:
-                    prev  = lines[i - 1].split()
-                    sd1_value = prev[-1] if prev else ""
-                if "Seismic Design Category" in line:
-                    seismic_category = line.split(":")[-1].strip()
-            if ss_value:
-                break
+        for page in pdf.pages:
+            t = page.extract_text()
+            if t:
+                full_text += t + "\n"
 except Exception as e:
-    print(f"PDF EXTRACTION ERROR: {e}")
+    print(f"PDF READ ERROR: {e}")
 
-print(f"Ss={ss_value} Sms={sms_value} Sds={sds_value}")
-print(f"S1={s1_value} Sm1={sm1_value} Sd1={sd1_value}")
-print(f"Seismic Category={seismic_category}")
+# Helper to extract value after label
+def extract_val(text, label):
+    pattern = rf"{re.escape(label)}\s+([\d\.]+)"
+    m = re.search(pattern, text, re.IGNORECASE)
+    if m:
+        return m.group(1).strip()
+    return ""
+
+def extract_text_val(text, label):
+    pattern = rf"{re.escape(label)}\s+([^\n]+)"
+    m = re.search(pattern, text, re.IGNORECASE)
+    if m:
+        return m.group(1).strip().split()[0]
+    return ""
+
+ss_value      = extract_val(full_text, "SS")
+s1_value      = extract_val(full_text, "S1")
+fa_value      = extract_val(full_text, "Fa")
+tl_value      = extract_val(full_text, "TL")
+sms_value     = extract_val(full_text, "SMS")
+sds_value     = extract_val(full_text, "SDS")
+risk_category = extract_text_val(full_text, "Risk Category")
+site_class    = extract_text_val(full_text, "Site Class")
+
+# Defaults
+if not fa_value:
+    fa_value = "1.2"
+if not risk_category:
+    risk_category = "II"
+if not site_class:
+    site_class = "D"
+# Extract just the letter for site class
+site_class = site_class[0] if site_class else "D"
+
+print(f"Ss={ss_value} S1={s1_value} Fa={fa_value} TL={tl_value}")
+print(f"Sms={sms_value} Sds={sds_value}")
+print(f"Risk Category={risk_category} Site Class={site_class}")
 
 # =========================
 # UPDATE INFO FILE
@@ -286,12 +276,13 @@ sys.stdout.flush()
 
 fields = {
     "SEISMIC_SS=":       ss_value,
+    "SEISMIC_S1=":       s1_value,
+    "SEISMIC_FA=":       fa_value,
+    "SEISMIC_TL=":       tl_value,
     "SEISMIC_SMS=":      sms_value,
     "SEISMIC_SDS=":      sds_value,
-    "SEISMIC_S1=":       s1_value,
-    "SEISMIC_SM1=":      sm1_value,
-    "SEISMIC_SD1=":      sd1_value,
-    "SEISMIC_CATEGORY=": seismic_category,
+    "SEISMIC_RISK=":     risk_category,
+    "SEISMIC_CLASS=":    site_class,
     "SEISMIC_PDF_DONE=": "Y",
 }
 

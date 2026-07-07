@@ -1422,16 +1422,11 @@ class ScriptRunner(QObject):
 
         success = self._proc.returncode == 0
 
-        # If XL files were created, show popup and send response
-        # BEFORE emitting stage_done (subprocess still waiting on stdin)
+        # If XL files were created, show popup after stage done
         if self._xl_paths:
             paths_str = "|".join(self._xl_paths)
             self._xl_paths = []
             signals.req_xl_complete.emit(paths_str)
-            result = self._wait_for_result(key, timeout=300)
-            if self._proc.poll() is None:
-                self._proc.stdin.write((result or "CLOSE") + "\n")
-                self._proc.stdin.flush()
 
         signals.stage_done.emit(key, success)
         return success
@@ -1590,7 +1585,6 @@ class SAXWindow(QMainWindow):
 
     def handle_xl_complete(self, paths_str):
         paths = [p for p in paths_str.split("|") if p.strip()]
-        # Read current HEADLESS setting from config
         try:
             from config import HEADLESS as _headless
         except:
@@ -1599,9 +1593,13 @@ class SAXWindow(QMainWindow):
         result = dlg.exec()
         if result == QDialog.Accepted:
             self.append_log(
-                f"XL files kept: "
-                f"{', '.join(os.path.basename(p) for p in dlg.keep_open)}"
+                f"Opening: {', '.join(os.path.basename(p) for p in dlg.keep_open)}"
             )
+            for p in dlg.keep_open:
+                try:
+                    os.startfile(p)
+                except Exception as e:
+                    self.append_log(f"ERROR opening {os.path.basename(p)}: {e}")
             runner.put_result("KEEP")
         else:
             self.append_log("XL files closed.")

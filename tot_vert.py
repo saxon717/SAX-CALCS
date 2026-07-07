@@ -212,7 +212,34 @@ try:
     vert_cover.range("A12").value = lat_cover.range("A12").value
     vert_cover.range("A13").value = lat_cover.range("A13").value
     vert_cover.range("D35").value = lat_cover.range("D35").value
+    vert_cover.range("E37").value = project_number
     print("TOT LAT COVER DATA COPIED")
+
+    # Project description textbox on cover
+    if good_description:
+        try:
+            for shape in vert_cover.api.Shapes:
+                try:
+                    shape_text = shape.TextFrame.Characters().Text
+                    if (
+                        "PROJECT DESCRIPTION" in shape_text.upper()
+                        or len(shape_text.strip()) > 20
+                    ):
+                        shape.TextFrame.Characters().Text = project_description
+                        print("DESCRIPTION TEXTBOX UPDATED")
+                        break
+                except:
+                    pass
+        except Exception as e:
+            print(f"TEXTBOX ERROR: {e}")
+
+    # Hide Nevada Snow tab if it exists
+    try:
+        nevada_ws = vert_wb.sheets["Nevada Snow"]
+        nevada_ws.api.Visible = False
+        print("NEVADA SNOW TAB HIDDEN")
+    except:
+        pass
 
     # Criteria sheet — elevation B15, snow load E15
     print("UI_STEP:Writing snow load")
@@ -230,10 +257,9 @@ try:
     else:
         print("WARNING: No snow load value")
 
-    # California Snow sheet — insert screenshots stacked vertically
+    # California Snow sheet — snow screenshot at A3, no resize
     print("Inserting screenshots onto California Snow sheet...")
     cal_snow_ws.activate()
-    inserted = 0
 
     if snow_screenshot and os.path.exists(snow_screenshot):
         try:
@@ -241,51 +267,43 @@ try:
                 os.path.abspath(snow_screenshot),
                 top=cal_snow_ws.range("A3").top,
                 left=cal_snow_ws.range("A3").left,
-                width=400, height=200,
             )
             print("SNOW SCREENSHOT INSERTED")
-            inserted += 1
         except Exception as e:
             print(f"SNOW SCREENSHOT INSERT FAILED: {e}")
     else:
         print("WARNING: Snow screenshot not found")
 
-    if elevation_screenshot and os.path.exists(elevation_screenshot):
-        try:
-            cal_snow_ws.pictures.add(
-                os.path.abspath(elevation_screenshot),
-                top=cal_snow_ws.range("A15").top,
-                left=cal_snow_ws.range("A15").left,
-                width=400, height=200,
-            )
-            print("ELEVATION SCREENSHOT INSERTED")
-            inserted += 1
-        except Exception as e:
-            print(f"ELEVATION SCREENSHOT INSERT FAILED: {e}")
-    else:
-        print("WARNING: Elevation screenshot not found")
-
-    print(f"California Snow: {inserted}/2 screenshots inserted")
-
-    # Location sheet — Google Maps screenshot
+    # Location sheet — screenshot at A4, width 5.8 inches (417.6 pts)
     print("Inserting location screenshot...")
     location_ws.activate()
     if location_screenshot and os.path.exists(location_screenshot):
         try:
-            location_ws.pictures.add(
+            pic = location_ws.pictures.add(
                 os.path.abspath(location_screenshot),
-                top=location_ws.range("A3").top,
-                left=location_ws.range("A3").left,
-                width=620, height=480,
+                top=location_ws.range("A4").top,
+                left=location_ws.range("A4").left,
             )
+            # Set width to 5.8 inches (Excel uses points: 1 inch = 72 pts)
+            pic.width  = 5.8 * 72
+            # Height scales proportionally automatically
             print("LOCATION SCREENSHOT INSERTED")
         except Exception as e:
             print(f"LOCATION SCREENSHOT INSERT FAILED: {e}")
     else:
         print("WARNING: Location screenshot not found")
 
-    # Snow load writeback to LAT W!B6 — TBD cell confirmation
-    print("Snow load writeback to TOT LAT W!B6 — TBD")
+    # Snow load writeback — VERT Criteria D48 -> LAT W B6
+    try:
+        roof_snow = criteria_ws.range("D48").value
+        if roof_snow is not None:
+            lat_w_ws = lat_wb.sheets["W"]
+            lat_w_ws.range("B6").value = roof_snow
+            print(f"ROOF SNOW LOAD -> LAT W!B6: {roof_snow}")
+        else:
+            print("WARNING: Criteria D48 is empty — LAT W!B6 not updated")
+    except Exception as e:
+        print(f"WARNING: Snow load writeback failed: {e}")
 
     # Navigate to cover and save both
     vert_cover.activate()
@@ -310,17 +328,10 @@ try:
     print(f"UI_XL_PATH:{vert_path}")
     sys.stdout.flush()
 
-    response = sys.stdin.readline().strip()
-
-    if response == "KEEP":
-        # Make visible so user can see them
-        app.visible = True
-        print("XL FILES REVEALED FOR REVIEW")
-    else:
-        lat_wb.close()
-        vert_wb.close()
-        app.quit()
-        print("XL FILES CLOSED")
+    # Close both — runner will reopen if user clicks Yes
+    lat_wb.close()
+    vert_wb.close()
+    app.quit()
 
 except Exception as e:
     try: lat_wb.close()
