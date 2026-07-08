@@ -573,26 +573,30 @@ class InfoExistsDialog(SAXDialog):
     def __init__(self, parent, files):
         super().__init__(parent, "INFO File Already Exists")
         from datetime import datetime
+
+        self.files         = files
+        self.selected_file = None
+        self._row_widgets  = []
+
         self.main_layout.addWidget(
-            self._title_label(
-                f"{len(files)} INFO file(s) found for this project."
-            )
+            self._title_label(f"{len(files)} INFO file(s) found for this project.")
         )
         self.main_layout.addWidget(
             self._body_label("What would you like to do?")
         )
+
         for f in files:
             try:
                 modified = os.path.getmtime(f)
-                date_str = datetime.fromtimestamp(modified).strftime(
-                    "%m/%d/%y %I:%M %p"
-                )
-                label = f"{os.path.basename(f)}  —  {date_str}"
-            except Exception:
-                label = os.path.basename(f)
-            date_str, _ = self._file_meta(f)
-            self.main_layout.addWidget(self._info_box("FILE", label))
-            self.main_layout.addWidget(self._info_box("DATE", date_str))
+                date_str = datetime.fromtimestamp(modified).strftime("%m/%d/%y %I:%M %p")
+            except:
+                date_str = ""
+
+            file_box = self._info_box("FILE", f"{os.path.basename(f)}  —  {date_str}")
+            file_box.setCursor(Qt.PointingHandCursor)
+            file_box.mousePressEvent = lambda e, fp=f, w=file_box: self._select_file(fp, w)
+            self.main_layout.addWidget(file_box)
+            self._row_widgets.append((f, file_box))
 
         row = QHBoxLayout()
         row.setSpacing(8)
@@ -600,17 +604,30 @@ class InfoExistsDialog(SAXDialog):
         skip_btn = QPushButton("SKIP — USE EXISTING")
         skip_btn.setStyleSheet(DIALOG_BTN_BLUE)
         skip_btn.clicked.connect(lambda: self.done(3))
-        overwrite_btn = QPushButton("OVERWRITE EXISTING")
-        overwrite_btn.setStyleSheet(DIALOG_BTN_RED)
-        overwrite_btn.clicked.connect(lambda: self.done(2))
+        self.overwrite_btn = QPushButton("OVERWRITE EXISTING")
+        self.overwrite_btn.setStyleSheet(DIALOG_BTN_RED)
+        self.overwrite_btn.clicked.connect(lambda: self.done(2))
         new_btn = QPushButton("RE-RUN — CREATE NEW")
         new_btn.setStyleSheet(DIALOG_BTN_GREEN)
         new_btn.clicked.connect(self.accept)
         new_btn.setDefault(True)
         row.addWidget(skip_btn)
-        row.addWidget(overwrite_btn)
+        row.addWidget(self.overwrite_btn)
         row.addWidget(new_btn)
         self.main_layout.addLayout(row)
+
+    def _select_file(self, filepath, widget):
+        # Reset all
+        for f, w in self._row_widgets:
+            w.setStyleSheet(w.styleSheet().replace(
+                f"border:2px solid {BLUE}", f"border:1px solid {BORDER}"
+            ))
+        # Highlight selected with blue border
+        current = widget.styleSheet()
+        widget.setStyleSheet(current.replace(
+            f"border:1px solid {BORDER}", f"border:2px solid {BLUE}"
+        ))
+        self.selected_file = filepath
 
 
 class ManualAddressDialog(SAXDialog):
@@ -1652,13 +1669,15 @@ class SAXWindow(QMainWindow):
         )
 
     def handle_info_exists(self, files_str):
-        files = files_str.split("|")
-        dlg = InfoExistsDialog(self, files)
+        files  = files_str.split("|")
+        dlg    = InfoExistsDialog(self, files)
         result = dlg.exec()
         if result == 3:
             runner.put_result("SKIP")
         elif result == 2:
-            runner.put_result("OVERWRITE")
+            # Pass back the selected file path so 01_info.py knows which to overwrite
+            selected = dlg.selected_file or files[-1]
+            runner.put_result(f"OVERWRITE:{selected}")
         else:
             runner.put_result("NEW")
 

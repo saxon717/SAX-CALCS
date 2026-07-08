@@ -64,9 +64,15 @@ if existing_infos:
         print("DONE")
         sys.exit()
 
-    elif response == "OVERWRITE":
-        print("OVERWRITING OLDEST INFO FILE")
-        info_path = existing_infos[-1]
+    elif response.startswith("OVERWRITE"):
+        # May include specific file path: OVERWRITE:/path/to/file.txt
+        parts = response.split(":", 1)
+        if len(parts) > 1 and os.path.exists(parts[1]):
+            info_path = parts[1]
+            print(f"OVERWRITING: {os.path.basename(info_path)}")
+        else:
+            info_path = existing_infos[-1]
+            print("OVERWRITING OLDEST INFO FILE")
         try:
             for src_file in existing_infos:
                 with open(src_file, "r", encoding="utf-8") as f:
