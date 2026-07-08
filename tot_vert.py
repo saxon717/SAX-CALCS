@@ -6,36 +6,23 @@ import xlwings as xw
 from datetime import datetime
 
 from config import (
-    BASE_FOLDER,
-    UI_SUBFOLDER,
-    CALC_SUBFOLDER,
-    YEAR_FOLDER_SUFFIX,
+    find_project,
+    get_project_name,
+    get_ui_folder,
+    get_calc_folder,
+    read_info,
+    find_template,
+    find_xl_file,
+    make_output_path,
     TOT_TEMPLATE_FOLDER,
     TOT_VERT_TEMPLATE_NAME,
     HEADLESS,
+    YEAR_FOLDER_SUFFIX,
 )
 
 project_number = sys.argv[1]
-year_prefix    = project_number[:2]
-year_folder    = os.path.join(BASE_FOLDER, f"{year_prefix}{YEAR_FOLDER_SUFFIX}")
-
-# =========================
-# FIND PROJECT
-# =========================
-
-print("UI_STEP:Reading INFO file")
-sys.stdout.flush()
-
-project_root        = ""
-project_folder_name = ""
-
-for folder in os.listdir(year_folder):
-    if folder.startswith(project_number):
-        project_root        = os.path.join(year_folder, folder)
-        project_folder_name = folder
-        break
-
-if project_root == "":
+project_root, project_folder_name = find_project(project_number)
+if not project_root:
     raise Exception("PROJECT NOT FOUND")
 
 project_name_only = (
@@ -44,64 +31,20 @@ project_name_only = (
     .strip().lstrip("-").strip()
 )
 
-ui_folder           = os.path.join(project_root, UI_SUBFOLDER)
-calculations_folder = os.path.join(project_root, CALC_SUBFOLDER)
+ui_folder           = get_ui_folder(project_root)
+calculations_folder = get_calc_folder(project_root)
 
-info_path   = ""
-latest_time = 0
-
-for file in os.listdir(ui_folder):
-    upper_file = file.upper()
-    if (
-        file.endswith(".txt")
-        and "INFO" in upper_file
-        and project_number in upper_file
-    ):
-        full_path     = os.path.join(ui_folder, file)
-        modified_time = os.path.getmtime(full_path)
-        if modified_time > latest_time:
-            latest_time = modified_time
-            info_path   = full_path
-
-if info_path == "":
+info_data, info_path = read_info(project_root, project_number)
+if not info_path:
     raise Exception("INFO FILE NOT FOUND")
 
 print("INFO FILE FOUND")
 
-with open(info_path, "r", encoding="utf-8") as f:
-    info_lines = f.readlines()
-
-project_description  = ""
-tot_snow_load        = ""
-elevation            = ""
-snow_screenshot      = ""
-elevation_screenshot = ""
-location_screenshot  = ""
-
-for line in info_lines:
-    if line.startswith("PROJECT_DESCRIPTION="):
-        project_description = line.replace("PROJECT_DESCRIPTION=", "").strip()
-    if line.startswith("TOT_SNOW_LOAD="):
-        tot_snow_load = line.replace("TOT_SNOW_LOAD=", "").strip()
-    if line.startswith("ELEVATION="):
-        elevation = line.replace("ELEVATION=", "").strip()
-    if line.startswith("TOT_SNOW_SCREENSHOT="):
-        snow_screenshot = line.replace("TOT_SNOW_SCREENSHOT=", "").strip()
-    if line.startswith("ELEVATION_SCREENSHOT="):
-        elevation_screenshot = line.replace("ELEVATION_SCREENSHOT=", "").strip()
-    if line.startswith("LOCATION_SCREENSHOT="):
-        location_screenshot = line.replace("LOCATION_SCREENSHOT=", "").strip()
-
-project_description = re.sub(r"\s+", " ", project_description).strip()
-word_count          = len(project_description.split())
-good_description    = word_count >= 10
-
-# Extract numeric elevation
-elevation_num = ""
-if elevation:
-    m = re.search(r"([\d,]+)", elevation)
-    if m:
-        elevation_num = m.group(1).replace(",", "")
+project_description = info_data.get("PROJECT_DESCRIPTION", "")
+tot_snow_load = info_data.get("TOT_SNOW_LOAD", "")
+elevation = info_data.get("ELEVATION", "")
+snow_screenshot = info_data.get("TOT_SNOW_SCREENSHOT", "")
+location_screenshot = info_data.get("LOCATION_SCREENSHOT", "")
 
 # =========================
 # FIND TOT VERT TEMPLATE

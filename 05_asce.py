@@ -7,8 +7,13 @@ import sys
 from datetime import datetime
 
 from config import (
-    BASE_FOLDER,
-    UI_SUBFOLDER,
+    find_project,
+    get_project_name,
+    get_ui_folder,
+    get_calc_folder,
+    read_info,
+    update_info,
+    make_output_path,
     CALC_SUBFOLDER,
     YEAR_FOLDER_SUFFIX,
     HEADLESS,
@@ -19,52 +24,18 @@ from config import (
 # =========================
 
 project_number = sys.argv[1]
-year_prefix    = project_number[:2]
-year_folder    = os.path.join(BASE_FOLDER, f"{year_prefix}{YEAR_FOLDER_SUFFIX}")
-
-# =========================
-# FIND PROJECT
-# =========================
-
-print("UI_STEP:Reading INFO file")
-sys.stdout.flush()
-
-project_root        = ""
-project_folder_name = ""
-
-for folder in os.listdir(year_folder):
-    if folder.startswith(project_number):
-        project_root        = os.path.join(year_folder, folder)
-        project_folder_name = folder
-        break
-
-if project_root == "":
-    raise Exception("PROJECT FOLDER NOT FOUND")
+project_root, project_folder_name = find_project(project_number)
+if not project_root:
+    raise Exception("PROJECT NOT FOUND")
 
 # =========================
 # FIND INFO FILE IN UI FOLDER
 # =========================
 
-ui_folder = os.path.join(project_root, UI_SUBFOLDER)
-os.makedirs(ui_folder, exist_ok=True)
+ui_folder = get_ui_folder(project_root)
 
-info_path   = ""
-latest_time = 0
-
-for file in os.listdir(ui_folder):
-    upper_file = file.upper()
-    if (
-        file.endswith(".txt")
-        and "INFO" in upper_file
-        and project_number in upper_file
-    ):
-        full_path     = os.path.join(ui_folder, file)
-        modified_time = os.path.getmtime(full_path)
-        if modified_time > latest_time:
-            latest_time = modified_time
-            info_path   = full_path
-
-if info_path == "":
+info_data, info_path = read_info(project_root, project_number)
+if not info_path:
     raise Exception("INFO FILE NOT FOUND")
 
 print("INFO FILE FOUND")
@@ -73,29 +44,13 @@ print("INFO FILE FOUND")
 # READ INFO FILE
 # =========================
 
-with open(info_path, "r", encoding="utf-8") as file:
-    info_lines = file.readlines()
+project_name = info_data.get("PROJECT_NAME", "")
+project_address = info_data.get("PROJECT_ADDRESS", "")
+city = info_data.get("CITY", "")
+state = info_data.get("STATE", "")
+zip_code = info_data.get("ZIP_CODE", "")
+tot_status = info_data.get("TOT", "")
 
-project_name    = ""
-project_address = ""
-city            = ""
-state           = ""
-zip_code        = ""
-tot_status      = ""
-
-for line in info_lines:
-    if line.startswith("PROJECT_NAME="):
-        project_name = line.replace("PROJECT_NAME=", "").strip()
-    if line.startswith("PROJECT_ADDRESS="):
-        project_address = line.replace("PROJECT_ADDRESS=", "").strip()
-    if line.startswith("CITY="):
-        city = line.replace("CITY=", "").strip()
-    if line.startswith("STATE="):
-        state = line.replace("STATE=", "").strip()
-    if line.startswith("ZIP_CODE="):
-        zip_code = line.replace("ZIP_CODE=", "").strip()
-    if line.startswith("TOT="):
-        tot_status = line.replace("TOT=", "").strip()
 
 # =========================
 # STOP IF TOT
@@ -109,7 +64,7 @@ if tot_status == "Y":
 # FOLDERS
 # =========================
 
-calculations_folder = os.path.join(project_root, CALC_SUBFOLDER)
+calculations_folder = get_calc_folder(project_root)
 
 # =========================
 # CHECK IF ASCE PDF ALREADY EXISTS

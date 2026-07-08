@@ -6,35 +6,21 @@ import re
 import pdfplumber
 
 from config import (
-    BASE_FOLDER,
-    UI_SUBFOLDER,
-    CALC_SUBFOLDER,
-    YEAR_FOLDER_SUFFIX,
+    find_project,
+    get_project_name,
+    get_ui_folder,
+    get_calc_folder,
+    read_info,
+    update_info,
+    make_output_path,
     SEISMIC_WEBSITE,
     HEADLESS,
+    YEAR_FOLDER_SUFFIX,
 )
 
 project_number = sys.argv[1]
-year_prefix    = project_number[:2]
-year_folder    = os.path.join(BASE_FOLDER, f"{year_prefix}{YEAR_FOLDER_SUFFIX}")
-
-# =========================
-# FIND PROJECT
-# =========================
-
-print("UI_STEP:Reading INFO file")
-sys.stdout.flush()
-
-project_root        = ""
-project_folder_name = ""
-
-for folder in os.listdir(year_folder):
-    if folder.startswith(project_number):
-        project_root        = os.path.join(year_folder, folder)
-        project_folder_name = folder
-        break
-
-if project_root == "":
+project_root, project_folder_name = find_project(project_number)
+if not project_root:
     raise Exception("PROJECT NOT FOUND")
 
 project_name_only = (
@@ -43,67 +29,21 @@ project_name_only = (
     .strip().lstrip("-").strip()
 )
 
-ui_folder           = os.path.join(project_root, UI_SUBFOLDER)
-calculations_folder = os.path.join(project_root, CALC_SUBFOLDER)
+ui_folder           = get_ui_folder(project_root)
+calculations_folder = get_calc_folder(project_root)
 os.makedirs(ui_folder, exist_ok=True)
 
-info_path   = ""
-latest_time = 0
-
-for file in os.listdir(ui_folder):
-    upper_file = file.upper()
-    if (
-        file.endswith(".txt")
-        and "INFO" in upper_file
-        and project_number in upper_file
-    ):
-        full_path     = os.path.join(ui_folder, file)
-        modified_time = os.path.getmtime(full_path)
-        if modified_time > latest_time:
-            latest_time = modified_time
-            info_path   = full_path
-
-if info_path == "":
+info_data, info_path = read_info(project_root, project_number)
+if not info_path:
     raise Exception("INFO FILE NOT FOUND")
 
 print("INFO FILE FOUND")
 
-with open(info_path, "r", encoding="utf-8") as f:
-    info_lines = f.readlines()
-
-project_address = ""
-city            = ""
-state           = ""
-zip_code        = ""
-seismic_done    = ""
-
-for line in info_lines:
-    if line.startswith("PROJECT_ADDRESS="):
-        project_address = line.replace("PROJECT_ADDRESS=", "").strip()
-    if line.startswith("CITY="):
-        city = line.replace("CITY=", "").strip()
-    if line.startswith("STATE="):
-        state = line.replace("STATE=", "").strip()
-    if line.startswith("ZIP_CODE="):
-        zip_code = line.replace("ZIP_CODE=", "").strip()
-    if line.startswith("SEISMIC_PDF_DONE="):
-        seismic_done = line.replace("SEISMIC_PDF_DONE=", "").strip()
-
-# Skip if already done
-if seismic_done == "Y":
-    print("Seismic data already collected — skipping")
-    print("DONE")
-    sys.exit(0)
-
-search_address = project_address
-if city:
-    search_address += f", {city}"
-if state:
-    search_address += f", {state}"
-if zip_code:
-    search_address += f" {zip_code}"
-
-print(f"SEISMIC SEARCH ADDRESS: {search_address}")
+project_address = info_data.get("PROJECT_ADDRESS", "")
+city = info_data.get("CITY", "")
+state = info_data.get("STATE", "")
+zip_code = info_data.get("ZIP_CODE", "")
+seismic_done = info_data.get("SEISMIC_PDF_DONE", "")
 
 # =========================
 # PDF NAME
@@ -286,19 +226,7 @@ fields = {
     "SEISMIC_PDF_DONE=": "Y",
 }
 
-updated = list(info_lines)
-for key, val in fields.items():
-    found = False
-    for i, line in enumerate(updated):
-        if line.startswith(key):
-            updated[i] = f"{key}{val}\n"
-            found = True
-            break
-    if not found:
-        updated.append(f"{key}{val}\n")
-
-with open(info_path, "w", encoding="utf-8") as f:
-    f.writelines(updated)
+update_info(info_path, project_root, {k.rstrip('='): v for k, v in fields.items()})
 
 print("SEISMIC VALUES WRITTEN TO INFO FILE")
 print("DONE")

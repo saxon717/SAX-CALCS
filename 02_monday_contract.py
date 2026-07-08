@@ -10,8 +10,12 @@ from monday_config import (
 )
 
 from config import (
-    BASE_FOLDER,
-    UI_SUBFOLDER,
+    find_project,
+    get_project_name,
+    get_ui_folder,
+    get_calc_folder,
+    read_info,
+    update_info,
     CONTRACT_SUBFOLDER,
     YEAR_FOLDER_SUFFIX,
 )
@@ -24,21 +28,8 @@ HEADERS = {
     "API-Version": "2023-10"
 }
 project_number = sys.argv[1]
-year_prefix    = project_number[:2]
-year_folder    = os.path.join(BASE_FOLDER, f"{year_prefix}{YEAR_FOLDER_SUFFIX}")
 
-if not os.path.exists(year_folder):
-    raise Exception(f"YEAR FOLDER NOT FOUND: {year_folder}")
-
-project_root        = ""
-project_folder_name = ""
-
-for folder in os.listdir(year_folder):
-    if folder.startswith(project_number):
-        project_root        = os.path.join(year_folder, folder)
-        project_folder_name = folder
-        break
-
+project_root, project_folder_name = find_project(project_number)
 if not project_root:
     raise Exception(f"PROJECT FOLDER NOT FOUND: {project_number}")
 
@@ -46,8 +37,7 @@ if not project_root:
 # INFO FILE HELPERS
 # =========================
 
-ui_folder = os.path.join(project_root, "UI")
-os.makedirs(ui_folder, exist_ok=True)
+ui_folder = get_ui_folder(project_root)
 
 info_files = sorted(
     [
@@ -77,20 +67,7 @@ def read_info():
 def write_monday_uploaded(value):
     if not info_path:
         return
-    with open(info_path, "r", encoding="utf-8") as f:
-        lines = f.readlines()
-    updated = []
-    found = False
-    for line in lines:
-        if line.startswith("MONDAY_UPLOADED="):
-            updated.append(f"MONDAY_UPLOADED={value}\n")
-            found = True
-        else:
-            updated.append(line)
-    if not found:
-        updated.append(f"MONDAY_UPLOADED={value}\n")
-    with open(info_path, "w", encoding="utf-8") as f:
-        f.writelines(updated)
+    update_info(info_path, project_root, {"MONDAY_UPLOADED": value})
 
 # =========================
 # FIND CONTRACT PDF

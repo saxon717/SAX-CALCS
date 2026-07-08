@@ -5,35 +5,22 @@ import xlwings as xw
 from datetime import datetime
 
 from config import (
-    BASE_FOLDER,
-    UI_SUBFOLDER,
-    CALC_SUBFOLDER,
-    YEAR_FOLDER_SUFFIX,
+    find_project,
+    get_project_name,
+    get_ui_folder,
+    get_calc_folder,
+    read_info,
+    update_info,
+    find_template,
+    make_output_path,
     TOT_TEMPLATE_FOLDER,
     TOT_LAT_TEMPLATE_NAME,
+    YEAR_FOLDER_SUFFIX,
 )
 
 project_number = sys.argv[1]
-year_prefix    = project_number[:2]
-year_folder    = os.path.join(BASE_FOLDER, f"{year_prefix}{YEAR_FOLDER_SUFFIX}")
-
-# =========================
-# FIND PROJECT
-# =========================
-
-print("UI_STEP:Reading INFO file")
-sys.stdout.flush()
-
-project_root        = ""
-project_folder_name = ""
-
-for folder in os.listdir(year_folder):
-    if folder.startswith(project_number):
-        project_root        = os.path.join(year_folder, folder)
-        project_folder_name = folder
-        break
-
-if project_root == "":
+project_root, project_folder_name = find_project(project_number)
+if not project_root:
     raise Exception("PROJECT NOT FOUND")
 
 project_name_only = (
@@ -42,89 +29,29 @@ project_name_only = (
     .strip().lstrip("-").strip()
 )
 
-ui_folder           = os.path.join(project_root, UI_SUBFOLDER)
-calculations_folder = os.path.join(project_root, CALC_SUBFOLDER)
+ui_folder           = get_ui_folder(project_root)
+calculations_folder = get_calc_folder(project_root)
 
-info_path   = ""
-latest_time = 0
-
-for file in os.listdir(ui_folder):
-    upper_file = file.upper()
-    if (
-        file.endswith(".txt")
-        and "INFO" in upper_file
-        and project_number in upper_file
-    ):
-        full_path     = os.path.join(ui_folder, file)
-        modified_time = os.path.getmtime(full_path)
-        if modified_time > latest_time:
-            latest_time = modified_time
-            info_path   = full_path
-
-if info_path == "":
+info_data, info_path = read_info(project_root, project_number)
+if not info_path:
     raise Exception("INFO FILE NOT FOUND")
 
 print("INFO FILE FOUND")
 
-with open(info_path, "r", encoding="utf-8") as f:
-    info_lines = f.readlines()
-
-project_address  = ""
-city             = ""
-state            = ""
-zip_code         = ""
-county           = ""
-verified_apn     = ""
-ss_value         = ""
-s1_value         = ""
-fa_value         = "1.2"
-tl_value         = ""
-sms_value        = ""
-sds_value        = ""
-risk_category    = "II"
-site_class       = "D"
-
-for line in info_lines:
-    if line.startswith("PROJECT_ADDRESS="):
-        project_address = line.replace("PROJECT_ADDRESS=", "").strip()
-    if line.startswith("CITY="):
-        city = line.replace("CITY=", "").strip()
-    if line.startswith("STATE="):
-        state = line.replace("STATE=", "").strip()
-    if line.startswith("ZIP_CODE="):
-        zip_code = line.replace("ZIP_CODE=", "").strip()
-    if line.startswith("COUNTY="):
-        county = line.replace("COUNTY=", "").strip()
-    if line.startswith("VERIFIED_APN="):
-        verified_apn = line.replace("VERIFIED_APN=", "").strip()
-    if line.startswith("SEISMIC_SS="):
-        ss_value = line.replace("SEISMIC_SS=", "").strip()
-    if line.startswith("SEISMIC_S1="):
-        s1_value = line.replace("SEISMIC_S1=", "").strip()
-    if line.startswith("SEISMIC_FA="):
-        v = line.replace("SEISMIC_FA=", "").strip()
-        if v:
-            fa_value = v
-    if line.startswith("SEISMIC_TL="):
-        tl_value = line.replace("SEISMIC_TL=", "").strip()
-    if line.startswith("SEISMIC_SMS="):
-        sms_value = line.replace("SEISMIC_SMS=", "").strip()
-    if line.startswith("SEISMIC_SDS="):
-        sds_value = line.replace("SEISMIC_SDS=", "").strip()
-    if line.startswith("SEISMIC_RISK="):
-        v = line.replace("SEISMIC_RISK=", "").strip()
-        if v:
-            risk_category = v
-    if line.startswith("SEISMIC_CLASS="):
-        v = line.replace("SEISMIC_CLASS=", "").strip()
-        if v:
-            site_class = v
-
-street_address       = project_address
-city_state_zip       = f"{city}, {state} {zip_code}"
-formatted_county_apn = ""
-if county and verified_apn:
-    formatted_county_apn = f"{county} COUNTY APN: {verified_apn}"
+project_address = info_data.get("PROJECT_ADDRESS", "")
+city = info_data.get("CITY", "")
+state = info_data.get("STATE", "")
+zip_code = info_data.get("ZIP_CODE", "")
+county = info_data.get("COUNTY", "")
+verified_apn = info_data.get("VERIFIED_APN", "")
+ss_value = info_data.get("SEISMIC_SS", "")
+s1_value = info_data.get("SEISMIC_S1", "")
+fa_value = info_data.get("SEISMIC_FA", "1.2")
+tl_value = info_data.get("SEISMIC_TL", "")
+sms_value = info_data.get("SEISMIC_SMS", "")
+sds_value = info_data.get("SEISMIC_SDS", "")
+risk_category = info_data.get("SEISMIC_RISK", "II")
+site_class = info_data.get("SEISMIC_CLASS", "D")
 
 # =========================
 # FIND TOT LAT TEMPLATE
@@ -221,17 +148,7 @@ try:
     if ult_value is not None:
         ult_str = str(ult_value)
         print(f"D30 (ULT) = {ult_str}")
-        updated = list(info_lines)
-        found   = False
-        for i, line in enumerate(updated):
-            if line.startswith("ULT="):
-                updated[i] = f"ULT={ult_str}\n"
-                found = True
-                break
-        if not found:
-            updated.append(f"ULT={ult_str}\n")
-        with open(info_path, "w", encoding="utf-8") as f:
-            f.writelines(updated)
+        update_info(info_path, project_root, {"ULT": ult_str})
         print(f"ULT VALUE WRITTEN TO INFO: {ult_str}")
 
 except Exception as e:

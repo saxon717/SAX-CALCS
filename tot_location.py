@@ -7,73 +7,33 @@ import urllib.request
 import json
 
 from config import (
-    BASE_FOLDER,
-    UI_SUBFOLDER,
-    YEAR_FOLDER_SUFFIX,
+    find_project,
+    get_ui_folder,
+    read_info,
+    update_info,
     HEADLESS,
+    YEAR_FOLDER_SUFFIX,
 )
 
 project_number = sys.argv[1]
-year_prefix    = project_number[:2]
-year_folder    = os.path.join(BASE_FOLDER, f"{year_prefix}{YEAR_FOLDER_SUFFIX}")
-
-# =========================
-# FIND PROJECT
-# =========================
-
-print("UI_STEP:Reading INFO file")
-sys.stdout.flush()
-
-project_root = ""
-for folder in os.listdir(year_folder):
-    if folder.startswith(project_number):
-        project_root = os.path.join(year_folder, folder)
-        break
-
-if project_root == "":
+project_root, project_folder_name = find_project(project_number)
+if not project_root:
     raise Exception("PROJECT NOT FOUND")
 
-ui_folder = os.path.join(project_root, UI_SUBFOLDER)
+ui_folder = get_ui_folder(project_root)
 os.makedirs(ui_folder, exist_ok=True)
 
-info_path   = ""
-latest_time = 0
-
-for file in os.listdir(ui_folder):
-    upper_file = file.upper()
-    if (
-        file.endswith(".txt")
-        and "INFO" in upper_file
-        and project_number in upper_file
-    ):
-        full_path     = os.path.join(ui_folder, file)
-        modified_time = os.path.getmtime(full_path)
-        if modified_time > latest_time:
-            latest_time = modified_time
-            info_path   = full_path
-
-if info_path == "":
+info_data, info_path = read_info(project_root, project_number)
+if not info_path:
     raise Exception("INFO FILE NOT FOUND")
 
 print("INFO FILE FOUND")
 
-with open(info_path, "r", encoding="utf-8") as f:
-    info_lines = f.readlines()
-
-project_address = ""
-city            = ""
-state           = ""
-zip_code        = ""
-
-for line in info_lines:
-    if line.startswith("PROJECT_ADDRESS="):
-        project_address = line.replace("PROJECT_ADDRESS=", "").strip()
-    if line.startswith("CITY="):
-        city = line.replace("CITY=", "").strip()
-    if line.startswith("STATE="):
-        state = line.replace("STATE=", "").strip()
-    if line.startswith("ZIP_CODE="):
-        zip_code = line.replace("ZIP_CODE=", "").strip()
+project_address = info_data.get("PROJECT_ADDRESS", "")
+city = info_data.get("CITY", "")
+state = info_data.get("STATE", "")
+zip_code = info_data.get("ZIP_CODE", "")
+location_png = info_data.get("LOCATION_SCREENSHOT", "")
 
 # =========================
 # SKIP IF EXISTS
@@ -233,20 +193,7 @@ print("UI_STEP:Updating INFO file")
 sys.stdout.flush()
 
 png_val = screenshot_path if os.path.exists(screenshot_path) else ""
-updated = list(info_lines)
-found   = False
-
-for i, line in enumerate(updated):
-    if line.startswith("LOCATION_SCREENSHOT="):
-        updated[i] = f"LOCATION_SCREENSHOT={png_val}\n"
-        found = True
-        break
-
-if not found:
-    updated.append(f"LOCATION_SCREENSHOT={png_val}\n")
-
-with open(info_path, "w", encoding="utf-8") as f:
-    f.writelines(updated)
+update_info(info_path, project_root, {"LOCATION_SCREENSHOT": png_val})
 
 print("LOCATION SCREENSHOT WRITTEN TO INFO")
 print("DONE")
