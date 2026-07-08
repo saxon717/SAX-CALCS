@@ -115,7 +115,7 @@ monday_uploaded  = info_data.get("MONDAY_UPLOADED", "").strip()
 user_confirmed   = False
 
 if monday_uploaded == "Y":
-    print(f"UI_UPLOAD_CONFIRM:{contract_file_name}")
+    print(f"UI_UPLOAD_CONFIRM:{contract_pdf}")
     sys.stdout.flush()
     user_response = sys.stdin.readline().strip()
     if user_response == "SKIP":
@@ -271,7 +271,7 @@ else:
     )
 
     if already_on_monday:
-        print(f"UI_UPLOAD_CONFIRM:{contract_file_name}")
+        print(f"UI_UPLOAD_CONFIRM:{contract_pdf}")
         sys.stdout.flush()
         user_response = sys.stdin.readline().strip()
         if user_response == "SKIP":

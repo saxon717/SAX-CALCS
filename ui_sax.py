@@ -221,6 +221,7 @@ class Signals(QObject):
     req_xl_complete     = Signal(str)   # XL files done — pipe-delimited paths
     req_tot_manual      = Signal(str)   # TOT inconclusive or unmatched — manual Y/N
     req_asce_exists     = Signal(str)   # ASCE PDF already found — skip or rerun
+    req_seismic_exists  = Signal(str)   # Seismic PDF already found — skip or rerun
     req_seismic_manual  = Signal(str)   # seismic website open — wait for user to save PDF
     req_location_exists = Signal(str)   # location screenshot already exists
 
@@ -471,6 +472,23 @@ class SAXDialog(QDialog):
         lbl.setWordWrap(True)
         return lbl
 
+    @staticmethod
+    def _file_meta(filepath):
+        """Return (date_str, size_str) for a file path."""
+        import os
+        from datetime import datetime
+        try:
+            t    = os.path.getmtime(filepath)
+            date = datetime.fromtimestamp(t).strftime("%m/%d/%y  %I:%M %p")
+            size = os.path.getsize(filepath)
+            if size > 1024 * 1024:
+                size_str = f"{size / 1024 / 1024:.1f} MB"
+            else:
+                size_str = f"{size / 1024:.1f} KB"
+            return date, size_str
+        except:
+            return "", ""
+
     def _info_box(self, label, value):
         frame = QFrame()
         frame.setStyleSheet(
@@ -512,10 +530,10 @@ class ConfirmProjectDialog(SAXDialog):
         row = QHBoxLayout()
         row.setSpacing(10)
         row.addStretch()
-        no_btn = QPushButton("No — Go Back")
+        no_btn = QPushButton("NO — GO BACK")
         no_btn.setStyleSheet(DIALOG_BTN_GRAY)
         no_btn.clicked.connect(self.reject)
-        yes_btn = QPushButton("Yes — Run Info")
+        yes_btn = QPushButton("YES — RUN INFO")
         yes_btn.setStyleSheet(DIALOG_BTN_BLUE)
         yes_btn.clicked.connect(self.accept)
         yes_btn.setDefault(True)
@@ -539,10 +557,10 @@ class OpenPDFDialog(SAXDialog):
         row = QHBoxLayout()
         row.setSpacing(10)
         row.addStretch()
-        no_btn = QPushButton("No — Continue")
+        no_btn = QPushButton("NO — CONTINUE")
         no_btn.setStyleSheet(DIALOG_BTN_GRAY)
         no_btn.clicked.connect(self.reject)
-        yes_btn = QPushButton("Yes — Open PDF")
+        yes_btn = QPushButton("YES — OPEN PDF")
         yes_btn.setStyleSheet(DIALOG_BTN_BLUE)
         yes_btn.clicked.connect(self.accept)
         yes_btn.setDefault(True)
@@ -572,18 +590,20 @@ class InfoExistsDialog(SAXDialog):
                 label = f"{os.path.basename(f)}  —  {date_str}"
             except Exception:
                 label = os.path.basename(f)
+            date_str, _ = self._file_meta(f)
             self.main_layout.addWidget(self._info_box("FILE", label))
+            self.main_layout.addWidget(self._info_box("DATE", date_str))
 
         row = QHBoxLayout()
         row.setSpacing(8)
         row.addStretch()
-        skip_btn = QPushButton("Skip")
+        skip_btn = QPushButton("SKIP — USE EXISTING")
         skip_btn.setStyleSheet(DIALOG_BTN_BLUE)
         skip_btn.clicked.connect(lambda: self.done(3))
-        overwrite_btn = QPushButton("Overwrite Most Recent")
+        overwrite_btn = QPushButton("OVERWRITE EXISTING")
         overwrite_btn.setStyleSheet(DIALOG_BTN_RED)
         overwrite_btn.clicked.connect(lambda: self.done(2))
-        new_btn = QPushButton("Create New")
+        new_btn = QPushButton("RE-RUN — CREATE NEW")
         new_btn.setStyleSheet(DIALOG_BTN_GREEN)
         new_btn.clicked.connect(self.accept)
         new_btn.setDefault(True)
@@ -627,10 +647,10 @@ class ManualAddressDialog(SAXDialog):
         row = QHBoxLayout()
         row.setSpacing(10)
         row.addStretch()
-        cancel_btn = QPushButton("Cancel")
+        cancel_btn = QPushButton("CANCEL")
         cancel_btn.setStyleSheet(DIALOG_BTN_GRAY)
         cancel_btn.clicked.connect(self.reject)
-        confirm_btn = QPushButton("Confirm Address")
+        confirm_btn = QPushButton("CONFIRM ADDRESS")
         confirm_btn.setStyleSheet(DIALOG_BTN_BLUE)
         confirm_btn.clicked.connect(self._confirm)
         confirm_btn.setDefault(True)
@@ -672,17 +692,17 @@ class APNDialog(SAXDialog):
         self.error_label = QLabel("")
         self.error_label.setStyleSheet(f"color:{RED};font-size:11px;")
         self.main_layout.addWidget(self.error_label)
-        open_btn = QPushButton("Open Contract PDF")
+        open_btn = QPushButton("OPEN CONTRACT PDF")
         open_btn.setStyleSheet(DIALOG_BTN_GRAY)
         open_btn.clicked.connect(self._open_pdf)
         self.main_layout.addWidget(open_btn)
         row = QHBoxLayout()
         row.setSpacing(10)
         row.addStretch()
-        cancel_btn = QPushButton("Cancel")
+        cancel_btn = QPushButton("CANCEL")
         cancel_btn.setStyleSheet(DIALOG_BTN_GRAY)
         cancel_btn.clicked.connect(self.reject)
-        confirm_btn = QPushButton("Confirm APN")
+        confirm_btn = QPushButton("CONFIRM APN")
         confirm_btn.setStyleSheet(DIALOG_BTN_BLUE)
         confirm_btn.clicked.connect(self._confirm)
         confirm_btn.setDefault(True)
@@ -727,10 +747,10 @@ class AddressMismatchDialog(SAXDialog):
         row = QHBoxLayout()
         row.setSpacing(10)
         row.addStretch()
-        no_btn = QPushButton("No — Keep Existing")
+        no_btn = QPushButton("NO — KEEP EXISTING")
         no_btn.setStyleSheet(DIALOG_BTN_GRAY)
         no_btn.clicked.connect(self.reject)
-        yes_btn = QPushButton("Yes — Update")
+        yes_btn = QPushButton("YES — UPDATE")
         yes_btn.setStyleSheet(DIALOG_BTN_BLUE)
         yes_btn.clicked.connect(self.accept)
         yes_btn.setDefault(True)
@@ -754,10 +774,10 @@ class TOTConfirmDialog(SAXDialog):
         row = QHBoxLayout()
         row.setSpacing(10)
         row.addStretch()
-        override_btn = QPushButton("Override Status")
+        override_btn = QPushButton("OVERWRITE EXISTING")
         override_btn.setStyleSheet(DIALOG_BTN_RED)
         override_btn.clicked.connect(lambda: self.done(2))
-        confirm_btn = QPushButton("Confirm")
+        confirm_btn = QPushButton("CONFIRM")
         confirm_btn.setStyleSheet(DIALOG_BTN_BLUE)
         confirm_btn.clicked.connect(self.accept)
         confirm_btn.setDefault(True)
@@ -768,14 +788,18 @@ class TOTConfirmDialog(SAXDialog):
 
 class UploadConfirmDialog(SAXDialog):
     """Shown only when the file already exists on Monday — ask to re-upload."""
-    def __init__(self, parent, contract_name):
+    def __init__(self, parent, contract_name, contract_path=""):
         super().__init__(parent, "File Already on Monday")
         self.main_layout.addWidget(
             self._title_label("This file already exists on Monday.com.")
         )
         self.main_layout.addWidget(
-            self._info_box("CONTRACT FILE", contract_name)
+            self._info_box("CONTRACT FILE", os.path.basename(contract_name))
         )
+        if contract_path:
+            date_str, _ = self._file_meta(contract_path)
+            if date_str:
+                self.main_layout.addWidget(self._info_box("DATE", date_str))
         self.main_layout.addWidget(
             self._body_label(
                 "The contract was already found on Monday. "
@@ -785,11 +809,11 @@ class UploadConfirmDialog(SAXDialog):
         row = QHBoxLayout()
         row.setSpacing(10)
         row.addStretch()
-        skip_btn = QPushButton("Skip")
-        skip_btn.setStyleSheet(DIALOG_BTN_GRAY)
+        skip_btn = QPushButton("SKIP — USE EXISTING")
+        skip_btn.setStyleSheet(DIALOG_BTN_BLUE)
         skip_btn.clicked.connect(lambda: self.done(2))
-        upload_btn = QPushButton("Yes — Upload Again")
-        upload_btn.setStyleSheet(DIALOG_BTN_BLUE)
+        upload_btn = QPushButton("RE-RUN — UPLOAD AGAIN")
+        upload_btn.setStyleSheet(DIALOG_BTN_GREEN)
         upload_btn.clicked.connect(self.accept)
         upload_btn.setDefault(True)
         row.addWidget(skip_btn)
@@ -812,10 +836,10 @@ class MondayMismatchDialog(SAXDialog):
         row = QHBoxLayout()
         row.setSpacing(10)
         row.addStretch()
-        no_btn = QPushButton("No — Cancel")
+        no_btn = QPushButton("NO — CANCEL")
         no_btn.setStyleSheet(DIALOG_BTN_GRAY)
         no_btn.clicked.connect(self.reject)
-        yes_btn = QPushButton("Yes — Use This")
+        yes_btn = QPushButton("YES — USE THIS")
         yes_btn.setStyleSheet(DIALOG_BTN_BLUE)
         yes_btn.clicked.connect(self.accept)
         yes_btn.setDefault(True)
@@ -840,7 +864,7 @@ class DependencyDialog(SAXDialog):
         row = QHBoxLayout()
         row.setSpacing(10)
         row.addStretch()
-        cancel_btn = QPushButton("Cancel")
+        cancel_btn = QPushButton("CANCEL")
         cancel_btn.setStyleSheet(DIALOG_BTN_GRAY)
         cancel_btn.clicked.connect(self.reject)
         run_btn = QPushButton(f"Run {missing_label} First")
@@ -860,15 +884,47 @@ class LocationExistsDialog(SAXDialog):
     def __init__(self, parent, path):
         super().__init__(parent, "Location Screenshot Exists")
         self.main_layout.addWidget(self._title_label("Location screenshot already exists."))
+        date_str, _ = self._file_meta(path)
         self.main_layout.addWidget(self._info_box("FILE", os.path.basename(path)))
+        self.main_layout.addWidget(self._info_box("DATE", date_str))
         self.main_layout.addWidget(self._body_label("Skip and use existing, or re-run?"))
         row = QHBoxLayout()
         row.setSpacing(10)
         row.addStretch()
-        skip_btn = QPushButton("Skip — Use Existing")
+        skip_btn = QPushButton("SKIP — USE EXISTING")
         skip_btn.setStyleSheet(DIALOG_BTN_BLUE)
         skip_btn.clicked.connect(lambda: self.done(2))
-        rerun_btn = QPushButton("Re-run")
+        rerun_btn = QPushButton("RE-RUN — CREATE NEW")
+        rerun_btn.setStyleSheet(DIALOG_BTN_GREEN)
+        rerun_btn.clicked.connect(self.accept)
+        rerun_btn.setDefault(True)
+        row.addWidget(skip_btn)
+        row.addWidget(rerun_btn)
+        self.main_layout.addLayout(row)
+
+
+# =========================
+# SEISMIC EXISTS DIALOG
+# =========================
+
+class SeismicExistsDialog(SAXDialog):
+    def __init__(self, parent, filename, date_str):
+        super().__init__(parent, "Seismic Report Already Exists")
+        self.main_layout.addWidget(
+            self._title_label("Seismic report already found.")
+        )
+        self.main_layout.addWidget(self._info_box("FILE", filename))
+        self.main_layout.addWidget(self._info_box("DATE", date_str))
+        self.main_layout.addWidget(
+            self._body_label("Use existing file or re-run seismic report?")
+        )
+        row = QHBoxLayout()
+        row.setSpacing(10)
+        row.addStretch()
+        skip_btn = QPushButton("SKIP — USE EXISTING")
+        skip_btn.setStyleSheet(DIALOG_BTN_BLUE)
+        skip_btn.clicked.connect(lambda: self.done(2))
+        rerun_btn = QPushButton("RE-RUN — CREATE NEW")
         rerun_btn.setStyleSheet(DIALOG_BTN_GREEN)
         rerun_btn.clicked.connect(self.accept)
         rerun_btn.setDefault(True)
@@ -900,10 +956,10 @@ class SeismicManualDialog(SAXDialog):
         row = QHBoxLayout()
         row.setSpacing(10)
         row.addStretch()
-        skip_btn = QPushButton("Skip")
+        skip_btn = QPushButton("SKIP — USE EXISTING")
         skip_btn.setStyleSheet(DIALOG_BTN_GRAY)
         skip_btn.clicked.connect(lambda: self.done(2))
-        done_btn = QPushButton("Done — PDF Saved")
+        done_btn = QPushButton("DONE — PDF SAVED")
         done_btn.setStyleSheet(DIALOG_BTN_GREEN)
         done_btn.clicked.connect(self.accept)
         done_btn.setDefault(True)
@@ -922,19 +978,19 @@ class ASCEExistsDialog(SAXDialog):
         self.main_layout.addWidget(
             self._title_label("ASCE report already found.")
         )
-        self.main_layout.addWidget(
-            self._info_box("EXISTING FILE", filename)
-        )
+        date_str, _ = self._file_meta(filename)
+        self.main_layout.addWidget(self._info_box("FILE", os.path.basename(filename)))
+        self.main_layout.addWidget(self._info_box("DATE", date_str))
         self.main_layout.addWidget(
             self._body_label("Skip and use existing, or re-run?")
         )
         row = QHBoxLayout()
         row.setSpacing(10)
         row.addStretch()
-        skip_btn = QPushButton("Skip — Use Existing")
+        skip_btn = QPushButton("SKIP — USE EXISTING")
         skip_btn.setStyleSheet(DIALOG_BTN_BLUE)
         skip_btn.clicked.connect(lambda: self.done(2))
-        rerun_btn = QPushButton("Re-run ASCE")
+        rerun_btn = QPushButton("RE-RUN — CREATE NEW")
         rerun_btn.setStyleSheet(DIALOG_BTN_GREEN)
         rerun_btn.clicked.connect(self.accept)
         rerun_btn.setDefault(True)
@@ -976,10 +1032,10 @@ class TOTManualDialog(SAXDialog):
         row = QHBoxLayout()
         row.setSpacing(10)
         row.addStretch()
-        no_btn = QPushButton("No — Not TOT")
+        no_btn = QPushButton("NO — NOT TOT")
         no_btn.setStyleSheet(DIALOG_BTN_BLUE)
         no_btn.clicked.connect(self.reject)
-        yes_btn = QPushButton("Yes — TOT Project")
+        yes_btn = QPushButton("YES — TOT PROJECT")
         yes_btn.setStyleSheet(DIALOG_BTN_GREEN)
         yes_btn.clicked.connect(self.accept)
         yes_btn.setDefault(True)
@@ -1032,11 +1088,11 @@ class XLCompleteDialog(SAXDialog):
         row.setSpacing(10)
         row.addStretch()
 
-        self.no_btn = QPushButton("No — Close")
+        self.no_btn = QPushButton("NO — CLOSE")
         self.no_btn.setStyleSheet(DIALOG_BTN_RED)
         self.no_btn.clicked.connect(self.reject)
 
-        yes_text = "Yes — Open" if headless else "Yes — Leave Open"
+        yes_text = "YES — OPEN" if headless else "YES — LEAVE OPEN"
         self.yes_btn = QPushButton(yes_text)
         self.yes_btn.setStyleSheet(DIALOG_BTN_GREEN)
         self.yes_btn.clicked.connect(self._confirm)
@@ -1328,6 +1384,17 @@ class ScriptRunner(QObject):
                 self._proc.stdin.flush()
                 continue
 
+            # ── SEISMIC EXISTS — skip or rerun ──
+            if line.startswith("UI_SEISMIC_EXISTS:"):
+                payload = line.replace("UI_SEISMIC_EXISTS:", "").strip()
+                signals.req_seismic_exists.emit(payload)
+                result = self._wait_for_result(key, timeout=120)
+                if result is None:
+                    return False
+                self._proc.stdin.write(result + "\n")
+                self._proc.stdin.flush()
+                continue
+
             # ── SEISMIC MANUAL — wait for user to save PDF ──
             if line.startswith("UI_SEISMIC_MANUAL:"):
                 pdf_path = line.replace("UI_SEISMIC_MANUAL:", "").strip()
@@ -1469,6 +1536,9 @@ class SAXWindow(QMainWindow):
         self._stage_target    = 0
         self._stage_anim      = QTimer()
         self._stage_anim.timeout.connect(self._tick_stage_bar)
+        self._total_seconds   = 0
+        self._total_clock     = QTimer()
+        self._total_clock.timeout.connect(self._tick_total_clock)
 
         # Connect all signals to main thread handlers
         signals.log.connect(self.append_log)
@@ -1488,6 +1558,7 @@ class SAXWindow(QMainWindow):
         signals.reset_bars.connect(self._reset_stage_bars)
         signals.req_tot_manual.connect(self.handle_tot_manual)
         signals.req_asce_exists.connect(self.handle_asce_exists)
+        signals.req_seismic_exists.connect(self.handle_seismic_exists)
         signals.req_seismic_manual.connect(self.handle_seismic_manual)
         signals.req_location_exists.connect(self.handle_location_exists)
 
@@ -1549,6 +1620,14 @@ class SAXWindow(QMainWindow):
         result = dlg.exec()
         runner.put_result("SKIP" if result == 2 else "DONE")
 
+    def handle_seismic_exists(self, payload):
+        parts    = payload.split("|")
+        filename = parts[0].strip()
+        date_str = parts[1].strip() if len(parts) > 1 else ""
+        dlg      = SeismicExistsDialog(self, filename, date_str)
+        result   = dlg.exec()
+        runner.put_result("SKIP" if result == 2 else "RERUN")
+
     def handle_asce_exists(self, filename):
         dlg    = ASCEExistsDialog(self, filename)
         result = dlg.exec()
@@ -1605,9 +1684,9 @@ class SAXWindow(QMainWindow):
             self.append_log("XL files closed.")
             runner.put_result("CLOSE")
 
-    def handle_upload_confirm(self, contract_name):
+    def handle_upload_confirm(self, contract_path):
         """File already on Monday — ask whether to re-upload."""
-        dlg = UploadConfirmDialog(self, contract_name)
+        dlg    = UploadConfirmDialog(self, contract_path, contract_path)
         result = dlg.exec()
         if result == 2:
             runner.put_result("SKIP")
@@ -1818,6 +1897,20 @@ class SAXWindow(QMainWindow):
         rl = QVBoxLayout(right)
         rl.setContentsMargins(20, 20, 20, 16)
         rl.setSpacing(8)
+
+        # Total runtime clock
+        th = QHBoxLayout()
+        tl = QLabel("TOTAL TIME")
+        tl.setFont(QFont("Arial", 8, QFont.Bold))
+        tl.setStyleSheet(f"color:{SUBTEXT};letter-spacing:1px;")
+        th.addWidget(tl)
+        th.addStretch()
+        self.total_timer_label = QLabel("00:00")
+        self.total_timer_label.setFont(QFont("Courier New", 13, QFont.Bold))
+        self.total_timer_label.setStyleSheet(f"color:{GREEN};")
+        self.total_timer_label.setAlignment(Qt.AlignRight)
+        th.addWidget(self.total_timer_label)
+        rl.addLayout(th)
 
         # Pipeline bar
         ph = QHBoxLayout()
@@ -2133,6 +2226,12 @@ class SAXWindow(QMainWindow):
         secs = self._stage_seconds % 60
         self.stage_timer_label.setText(f"{mins:02d}:{secs:02d}")
 
+    def _tick_total_clock(self):
+        self._total_seconds += 1
+        mins = self._total_seconds // 60
+        secs = self._total_seconds % 60
+        self.total_timer_label.setText(f"{mins:02d}:{secs:02d}")
+
     def set_pipeline_progress(self, current, total):
         if total == 0:
             return
@@ -2171,6 +2270,13 @@ class SAXWindow(QMainWindow):
     def append_log(self, message):
         if not message.strip():
             return
+        # Pipeline header lines — large bright green
+        if message.startswith("===") or message.startswith("--- Running"):
+            self.log_display.append(
+                f'<span style="color:#00FF88;font-family:Courier New;'
+                f'font-size:15px;font-weight:bold;">{message}</span>'
+            )
+            return
         if any(w in message for w in ["ERROR", "FAILED", "EXCEPTION"]):
             color = RED
         elif any(w in message for w in [
@@ -2180,7 +2286,7 @@ class SAXWindow(QMainWindow):
             color = GREEN
         elif any(w in message for w in ["WARNING", "WARN", "MISMATCH"]):
             color = YELLOW
-        elif message.startswith("  ▸"):
+        elif message.startswith("  ▸") or message.startswith("▸"):
             color = BLUE
         else:
             color = TEXT
@@ -2211,6 +2317,8 @@ class SAXWindow(QMainWindow):
     def stop_pipeline(self):
         runner.stop()
         self.running = False
+        self._total_clock.stop()
+        self.total_timer_label.setStyleSheet(f"color:{SUBTEXT};")
         self.append_log("=== PIPELINE STOPPED BY USER ===")
         QTimer.singleShot(200, self._re_enable_ui)
 
@@ -2310,6 +2418,11 @@ class SAXWindow(QMainWindow):
         self.stop_btn.setEnabled(True)
         self.pipeline_bar.setStyleSheet(self._bar_style(BLUE, radius=6))
         self.pipeline_bar.setValue(0)
+        # Start total runtime clock
+        self._total_seconds = 0
+        self.total_timer_label.setText("00:00")
+        self.total_timer_label.setStyleSheet(f"color:{GREEN};")
+        self._total_clock.start(1000)
         self.append_log(f"=== SETUP CALCS — {total} stages ===")
 
         def worker():
@@ -2340,6 +2453,10 @@ class SAXWindow(QMainWindow):
                         f"PIPELINE STOPPED — "
                         f"{STAGE_LABELS.get(key, key)} failed."
                     )
+                    QTimer.singleShot(0, lambda: (
+                        self._total_clock.stop(),
+                        self.total_timer_label.setStyleSheet(f"color:{RED};")
+                    ))
                     break
 
                 # After TOT completes, check TOT status and extend pipeline
@@ -2381,6 +2498,8 @@ class SAXWindow(QMainWindow):
 
     def _after_run_all(self):
         self._re_enable_ui()
+        self._total_clock.stop()
+        self.total_timer_label.setStyleSheet(f"color:{SUBTEXT};")
         self.append_log("=== SETUP CALCS COMPLETE ===")
 
 

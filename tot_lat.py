@@ -53,6 +53,11 @@ sds_value = info_data.get("SEISMIC_SDS", "")
 risk_category = info_data.get("SEISMIC_RISK", "II")
 site_class = info_data.get("SEISMIC_CLASS", "D")
 
+street_address       = project_address
+city_state_zip       = f"{city}, {state} {zip_code}"
+formatted_county_apn = f"{county} COUNTY APN: {verified_apn}" if county and verified_apn else ""
+calculations_folder  = get_calc_folder(project_root)
+
 # =========================
 # FIND TOT LAT TEMPLATE
 # =========================
@@ -106,6 +111,12 @@ sys.stdout.flush()
 
 app = xw.App(visible=False)
 app.display_alerts = False
+
+# Enable macros — bypass security warning
+try:
+    app.api.AutomationSecurity = 1  # msoAutomationSecurityLow
+except:
+    pass
 
 # Close any auto-created empty books
 for book in list(app.books):

@@ -46,6 +46,18 @@ elevation = info_data.get("ELEVATION", "")
 snow_screenshot = info_data.get("TOT_SNOW_SCREENSHOT", "")
 location_screenshot = info_data.get("LOCATION_SCREENSHOT", "")
 
+import re as _re
+project_description = _re.sub(r"\s+", " ", project_description).strip()
+word_count          = len(project_description.split())
+good_description    = word_count >= 10
+
+# Extract numeric elevation
+elevation_num = ""
+if elevation:
+    m = _re.search(r"([\d,]+)", elevation)
+    if m:
+        elevation_num = m.group(1).replace(",", "")
+
 # =========================
 # FIND TOT VERT TEMPLATE
 # =========================
@@ -131,6 +143,12 @@ sys.stdout.flush()
 app = xw.App(visible=False)
 app.display_alerts = False
 
+# Enable macros — bypass security warning
+try:
+    app.api.AutomationSecurity = 1  # msoAutomationSecurityLow
+except:
+    pass
+
 try:
     # Close any auto-created empty books
     for book in list(app.books):
@@ -147,7 +165,8 @@ try:
     vert_cover  = vert_wb.sheets["COVER"]
     criteria_ws = vert_wb.sheets["Criteria"]
     cal_snow_ws = vert_wb.sheets["California Snow"]
-    location_ws = vert_wb.sheets["Location"]
+    description_ws = vert_wb.sheets["Description"]
+    location_ws    = vert_wb.sheets["Location"]
 
     # Copy cover from TOT LAT
     vert_cover.range("A10").value = lat_cover.range("A10").value
@@ -158,23 +177,17 @@ try:
     vert_cover.range("E37").value = project_number
     print("TOT LAT COVER DATA COPIED")
 
-    # Project description textbox on cover
+    # Project description — merge B4:F15 on Description sheet
     if good_description:
         try:
-            for shape in vert_cover.api.Shapes:
-                try:
-                    shape_text = shape.TextFrame.Characters().Text
-                    if (
-                        "PROJECT DESCRIPTION" in shape_text.upper()
-                        or len(shape_text.strip()) > 20
-                    ):
-                        shape.TextFrame.Characters().Text = project_description
-                        print("DESCRIPTION TEXTBOX UPDATED")
-                        break
-                except:
-                    pass
+            description_ws.activate()
+            merge_range = description_ws.range("B4:F15")
+            merge_range.api.Merge()
+            merge_range.value = project_description
+            merge_range.api.WrapText = True
+            print("DESCRIPTION WRITTEN TO Description!B4:F15")
         except Exception as e:
-            print(f"TEXTBOX ERROR: {e}")
+            print(f"DESCRIPTION WRITE FAILED: {e}")
 
     # Hide Nevada Snow tab if it exists
     try:
@@ -201,6 +214,13 @@ try:
         print("WARNING: No snow load value")
 
     # California Snow sheet — snow screenshot at A3, no resize
+    # Fall back to finding file on disk if INFO field is blank
+    if not snow_screenshot:
+        candidate = os.path.join(get_ui_folder(project_root), f"{project_number} - TOT Snow Load.png")
+        if os.path.exists(candidate):
+            snow_screenshot = candidate
+            print(f"SNOW SCREENSHOT FOUND ON DISK: {os.path.basename(candidate)}")
+
     print("Inserting screenshots onto California Snow sheet...")
     cal_snow_ws.activate()
 
@@ -217,7 +237,15 @@ try:
     else:
         print("WARNING: Snow screenshot not found")
 
-    # Location sheet — screenshot at A4, width 5.8 inches (417.6 pts)
+    # Location sheet — screenshot at A4, width 5.8 inches
+    # Fall back to finding file on disk if INFO field is blank
+    if not location_screenshot:
+        candidate = os.path.join(get_ui_folder(project_root), f"{project_number} - Location.png")
+        if os.path.exists(candidate):
+            location_screenshot = candidate
+            print(f"LOCATION SCREENSHOT FOUND ON DISK: {os.path.basename(candidate)}")
+
+    print(f"Location screenshot path: {location_screenshot}")
     print("Inserting location screenshot...")
     location_ws.activate()
     if location_screenshot and os.path.exists(location_screenshot):
@@ -241,7 +269,10 @@ try:
         roof_snow = criteria_ws.range("D48").value
         if roof_snow is not None:
             lat_w_ws = lat_wb.sheets["W"]
+            # Briefly make app visible to allow write
+            app.visible = True
             lat_w_ws.range("B6").value = roof_snow
+            app.visible = False
             print(f"ROOF SNOW LOAD -> LAT W!B6: {roof_snow}")
         else:
             print("WARNING: Criteria D48 is empty — LAT W!B6 not updated")

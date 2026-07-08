@@ -63,7 +63,7 @@ YEAR_FOLDER_SUFFIX = "-XXX"
 # BROWSER SETTINGS
 # =========================
 
-HEADLESS = False  # True = run in background, False = show browser
+HEADLESS = True  # True = run in background, False = show browser
 
 # =========================
 # DATE HELPER
