@@ -49,14 +49,23 @@ existing_snow_png = info_data.get("TOT_SNOW_SCREENSHOT", "")
 existing_snow_png = info_data.get("TOT_SNOW_SCREENSHOT", "")
 
 # =========================
-# SKIP IF ALREADY CONFIRMED
+# SKIP IF ALREADY CONFIRMED AND DATA COMPLETE
 # =========================
 
+existing_snow = info_data.get("TOT_SNOW_LOAD", "")
+existing_elev = info_data.get("ELEVATION", "")
+
 if existing_tot in ("Y", "N") and not force_rerun:
-    label = "TOT (Town of Truckee)" if existing_tot == "Y" else "NOT TOT"
-    print(f"TOT already confirmed: {label} — skipping TOT check")
-    print("DONE")
-    sys.exit(0)
+    if existing_tot == "N":
+        print("TOT already confirmed: NOT TOT — skipping TOT check")
+        print("DONE")
+        sys.exit(0)
+    elif existing_tot == "Y" and existing_snow and existing_elev:
+        print(f"TOT already confirmed: TOT (Town of Truckee) — skipping TOT check")
+        print("DONE")
+        sys.exit(0)
+    elif existing_tot == "Y":
+        print("TOT confirmed but snow/elevation data missing — re-running to extract data")
 
 # =========================
 # SEARCH VALUE

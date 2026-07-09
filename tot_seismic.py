@@ -33,6 +33,9 @@ ui_folder           = get_ui_folder(project_root)
 calculations_folder = get_calc_folder(project_root)
 os.makedirs(ui_folder, exist_ok=True)
 
+print("UI_STEP:Reading INFO file")
+sys.stdout.flush()
+
 info_data, info_path = read_info(project_root, project_number)
 if not info_path:
     raise Exception("INFO FILE NOT FOUND")
@@ -44,6 +47,11 @@ city = info_data.get("CITY", "")
 state = info_data.get("STATE", "")
 zip_code = info_data.get("ZIP_CODE", "")
 seismic_done = info_data.get("SEISMIC_PDF_DONE", "")
+ss_in_info   = info_data.get("SEISMIC_SS", "")
+s1_in_info   = info_data.get("SEISMIC_S1", "")
+fa_in_info   = info_data.get("SEISMIC_FA", "")
+tl_in_info   = info_data.get("SEISMIC_TL", "")
+values_complete = all([ss_in_info, s1_in_info, fa_in_info, tl_in_info])
 
 project_name_only   = get_project_name(project_folder_name, project_number)
 calculations_folder = get_calc_folder(project_root)
@@ -53,7 +61,9 @@ calculations_folder = get_calc_folder(project_root)
 # =========================
 
 existing_seismic = ""
-latest_time = 0
+skip_extraction  = False
+latest_time      = 0
+
 for file in os.listdir(calculations_folder):
     if (
         file.endswith(".pdf")
@@ -63,26 +73,28 @@ for file in os.listdir(calculations_folder):
         full_path = os.path.join(calculations_folder, file)
         t = os.path.getmtime(full_path)
         if t > latest_time:
-            latest_time = t
+            latest_time      = t
             existing_seismic = full_path
 
-if existing_seismic:
+if existing_seismic and values_complete:
+    # PDF exists AND values in INFO — show popup
     from datetime import datetime
     mod_date = datetime.fromtimestamp(latest_time).strftime("%m/%d/%y %I:%M %p")
     print(f"UI_SEISMIC_EXISTS:{os.path.basename(existing_seismic)}|{mod_date}")
     sys.stdout.flush()
     response = sys.stdin.readline().strip()
     if response == "SKIP":
-        print("SEISMIC PDF EXISTS — extracting values from existing file")
-        sys.stdout.flush()
-        # Jump straight to extraction
-        seismic_pdf = existing_seismic
-        print(f"UI_STEP:Extracting seismic values")
-        sys.stdout.flush()
-        # (falls through to extraction section below)
+        print("SEISMIC DATA ALREADY IN INFO — SKIPPING")
+        print("DONE")
+        sys.exit(0)
     else:
         print("RE-RUNNING SEISMIC REPORT...")
-        existing_seismic = ""  # clear so it runs the website
+        existing_seismic = ""
+
+elif existing_seismic and not values_complete:
+    # PDF exists but values missing — extract silently
+    print("SEISMIC PDF FOUND — extracting missing values...")
+    sys.stdout.flush()
 
 if not existing_seismic:
     search_address = project_address
@@ -130,6 +142,8 @@ if not existing_seismic:
             print("SEISMIC WEBSITE OPENED")
             time.sleep(3)
 
+            print("UI_STEP:Selecting ASCE 7-16")
+            sys.stdout.flush()
             # Select ASCE 7-16
             try:
                 page.wait_for_selector('#dcrd', timeout=10000)
@@ -139,6 +153,8 @@ if not existing_seismic:
             except Exception as e:
                 print(f"ASCE 7-16 SELECT FAILED: {e}")
 
+            print("UI_STEP:Entering address")
+            sys.stdout.flush()
             # Enter address
             try:
                 page.wait_for_selector('.searchbox', timeout=10000)
@@ -156,6 +172,8 @@ if not existing_seismic:
 
             # Save PDF
             try:
+                print("UI_STEP:Waiting for PDF save")
+                sys.stdout.flush()
                 print("Saving seismic PDF...")
                 sys.stdout.flush()
                 time.sleep(15)  # Wait for results to fully render

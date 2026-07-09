@@ -54,39 +54,22 @@ existing_verified_apn = ""
 existing_monday       = ""
 
 if existing_infos:
-    files_str = "|".join(existing_infos)
-    print(f"UI_INFO_EXISTS:{files_str}")
-    sys.stdout.flush()
-    response = sys.stdin.readline().strip()
-
-    if response == "SKIP":
-        print("INFO FILE ALREADY EXISTS — SKIPPING")
-        print("DONE")
-        sys.exit()
-
-    elif response.startswith("OVERWRITE"):
-        # May include specific file path: OVERWRITE:/path/to/file.txt
-        parts = response.split(":", 1)
-        if len(parts) > 1 and os.path.exists(parts[1]):
-            info_path = parts[1]
-            print(f"OVERWRITING: {os.path.basename(info_path)}")
-        else:
-            info_path = existing_infos[-1]
-            print("OVERWRITING OLDEST INFO FILE")
-        try:
-            for src_file in existing_infos:
-                with open(src_file, "r", encoding="utf-8") as f:
-                    for line in f:
-                        if line.startswith("TOT=") and not existing_tot:
-                            existing_tot = line.replace("TOT=", "").strip()
-                        if line.startswith("VERIFIED_APN=") and not existing_verified_apn:
-                            existing_verified_apn = line.replace("VERIFIED_APN=", "").strip()
-                        if line.startswith("MONDAY_UPLOADED=") and not existing_monday:
-                            existing_monday = line.replace("MONDAY_UPLOADED=", "").strip()
-        except:
-            pass
-    else:
-        print("CREATING NEW INFO FILE")
+    # Always preserve key values from existing files
+    try:
+        for src_file in existing_infos:
+            with open(src_file, "r", encoding="utf-8") as f:
+                for line in f:
+                    if line.startswith("TOT=") and not existing_tot:
+                        existing_tot = line.replace("TOT=", "").strip()
+                    if line.startswith("VERIFIED_APN=") and not existing_verified_apn:
+                        existing_verified_apn = line.replace("VERIFIED_APN=", "").strip()
+                    if line.startswith("MONDAY_UPLOADED=") and not existing_monday:
+                        existing_monday = line.replace("MONDAY_UPLOADED=", "").strip()
+    except:
+        pass
+    print("INFO FILE ALREADY EXISTS — SKIPPING")
+    print("DONE")
+    sys.exit()
 
 # =========================
 # STEP 2 — FIND CONTRACT PDF
@@ -366,12 +349,12 @@ info_lines_out = [
     f"ULT=\n",
 ]
 
-# If overwriting, archive old file first
+# Always archive old and save new with today's date
 if info_path and os.path.exists(info_path):
-    write_info_lines(info_path, project_root, info_lines_out)
-    # write_info_lines handles archive and new file creation
+    new_path = write_info_lines(info_path, project_root, info_lines_out)
 else:
-    # New file
+    new_filename = f"{project_number} INFO - {today_str()}.txt"
+    new_path     = os.path.join(ui_folder, new_filename)
     with open(new_path, "w", encoding="utf-8") as f:
         f.writelines(info_lines_out)
 

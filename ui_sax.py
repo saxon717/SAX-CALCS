@@ -126,23 +126,23 @@ SCRIPTS = {
 }
 
 NORMAL_STAGES  = ["apn", "tot", "asce", "lat", "vert"]
-TOT_STAGES     = ["tot_location", "tot_seismic", "tot_lat", "tot_vert"]
+TOT_STAGES     = ["apn", "tot", "tot_location", "tot_seismic", "tot_lat", "tot_vert"]
 DEFAULT_STAGES = NORMAL_STAGES
 
 STAGE_LABELS = {
-    "info":       "01 — Project Info",
+    "info":       "Project Info",
     "monday":     "Upload Contract",
-    "apn":        "02 — APN Verification",
-    "tot":        "03 — TOT Check",
-    "asce":       "04 — ASCE Hazard Data",
-    "lat":        "05 — Lateral Calcs",
-    "vert":       "06 — Vertical Calcs",
+    "apn":        "APN Verification",
+    "tot":        "TOT Verification",
+    "asce":       "ASCE Hazard Data",
+    "lat":        "Lateral Calcs",
+    "vert":       "Vertical Calcs",
     "sync":       "07 — Sync",
     "notify":     "08 — Notify",
-    "tot_location": "05 — TOT Location Map",
-    "tot_seismic":  "06 — TOT Seismic Data",
-    "tot_lat":      "07 — TOT Lateral Calcs",
-    "tot_vert":     "08 — TOT Vertical Calcs",
+    "tot_location": "TOT Location Map",
+    "tot_seismic":  "TOT Seismic Data",
+    "tot_lat":      "TOT Lateral Calcs",
+    "tot_vert":     "TOT Vertical Calcs",
     "tot_sync":    "08 — TOT Sync",
     "tot_notify": "08 — TOT Notify",
 }
@@ -206,6 +206,7 @@ SCRIPT_STEPS = {
 class Signals(QObject):
     log               = Signal(str)
     stage_done        = Signal(str, bool)
+    stage_warning     = Signal(str)
     pipeline_progress = Signal(int, int)
     stage_progress    = Signal(int, int)
     after_info        = Signal(bool)
@@ -1241,10 +1242,12 @@ class ScriptRunner(QObject):
 
     def __init__(self):
         super().__init__()
-        self._proc         = None
-        self._stopped      = False
-        self._result_queue = queue.Queue()
-        self._xl_paths     = []
+        self._proc              = None
+        self._stopped           = False
+        self._result_queue      = queue.Queue()
+        self._xl_paths          = []
+        self._current_stage_key = ""
+        self._stage_had_warning = False
 
     def stop(self):
         self._stopped = True
@@ -1262,6 +1265,12 @@ class ScriptRunner(QObject):
         Wait for dialog result. If timeout, stop everything.
         Never continues automatically.
         """
+        # Clear any stale values from previous runs
+        while not self._result_queue.empty():
+            try:
+                self._result_queue.get_nowait()
+            except:
+                break
         try:
             return self._result_queue.get(timeout=timeout)
         except Exception:
@@ -1446,10 +1455,29 @@ class ScriptRunner(QObject):
                 continue
 
             # ── WARNING LOG — show in yellow in status log ──
+            # ── WARNING with specific stage key ──
+            if line.startswith("UI_LOG_WARNING_KEY:"):
+                payload = line.replace("UI_LOG_WARNING_KEY:", "").strip()
+                parts   = payload.split(":", 1)
+                if len(parts) == 2:
+                    warn_key, warn_msg = parts
+                    signals.log.emit(f"WARNING: {warn_msg}")
+                    signals.stage_warning.emit(warn_key.strip())
+                continue
+
             if line.startswith("UI_LOG_WARNING:"):
                 msg = line.replace("UI_LOG_WARNING:", "").strip()
                 signals.log.emit(f"WARNING: {msg}")
+                if self._current_stage_key:
+                    self._stage_had_warning = True
+                    signals.stage_warning.emit(self._current_stage_key)
                 continue
+
+            # Also catch plain WARNING: lines from scripts
+            if line.startswith("WARNING:"):
+                if self._current_stage_key:
+                    self._stage_had_warning = True
+                    signals.stage_warning.emit(self._current_stage_key)
 
             # ── UPLOAD AUTO — file not on Monday, upload immediately ──
             if line.startswith("UI_UPLOAD_AUTO:"):
@@ -1556,10 +1584,15 @@ class SAXWindow(QMainWindow):
         self._total_seconds   = 0
         self._total_clock     = QTimer()
         self._total_clock.timeout.connect(self._tick_total_clock)
+        self._total_clock.start(1000)
+        self._pipeline_seconds  = 0
+        self._pipeline_clock    = QTimer()
+        self._pipeline_clock.timeout.connect(self._tick_pipeline_clock)
 
         # Connect all signals to main thread handlers
         signals.log.connect(self.append_log)
         signals.stage_done.connect(self.on_stage_done)
+        signals.stage_warning.connect(lambda key: self._update_stage_dot(key, "warning"))
         signals.pipeline_progress.connect(self.set_pipeline_progress)
         signals.stage_progress.connect(self.set_stage_progress)
         signals.after_info.connect(self._after_info)
@@ -1702,6 +1735,8 @@ class SAXWindow(QMainWindow):
         else:
             self.append_log("XL files closed.")
             runner.put_result("CLOSE")
+        self._stop_pipeline_clock(success=True)
+        self.append_log("=== PIPELINE COMPLETE ===")
 
     def handle_upload_confirm(self, contract_path):
         """File already on Monday — ask whether to re-upload."""
@@ -1785,7 +1820,7 @@ class SAXWindow(QMainWindow):
         self.tot_badge.setStyleSheet(f"color:{SUBTEXT};")
         ll.addWidget(self.tot_badge)
 
-        self.load_btn = QPushButton("Load Project")
+        self.load_btn = QPushButton("LOAD PROJECT")
         self.load_btn.setStyleSheet(
             f"QPushButton{{background-color:{BTN_DEFAULT};color:{TEXT};"
             f"border:1px solid {BORDER};border-radius:6px;padding:8px;"
@@ -1796,7 +1831,7 @@ class SAXWindow(QMainWindow):
         self.load_btn.clicked.connect(self.load_project)
         ll.addWidget(self.load_btn)
 
-        self.open_project_btn = QPushButton("📁  Open Project")
+        self.open_project_btn = QPushButton("📁  OPEN PROJECT")
         self.open_project_btn.setMinimumHeight(36)
         self.open_project_btn.setStyleSheet(
             f"QPushButton{{background-color:{BTN_DEFAULT};color:{TEXT};"
@@ -1919,10 +1954,10 @@ class SAXWindow(QMainWindow):
 
         # Total runtime clock
         th = QHBoxLayout()
-        tl = QLabel("TOTAL TIME")
-        tl.setFont(QFont("Arial", 8, QFont.Bold))
-        tl.setStyleSheet(f"color:{SUBTEXT};letter-spacing:1px;")
-        th.addWidget(tl)
+        self.total_time_label = QLabel("TOTAL TIME")
+        self.total_time_label.setFont(QFont("Arial", 8, QFont.Bold))
+        self.total_time_label.setStyleSheet(f"color:{SUBTEXT};letter-spacing:1px;")
+        th.addWidget(self.total_time_label)
         th.addStretch()
         self.total_timer_label = QLabel("00:00")
         self.total_timer_label.setFont(QFont("Courier New", 13, QFont.Bold))
@@ -1931,12 +1966,26 @@ class SAXWindow(QMainWindow):
         th.addWidget(self.total_timer_label)
         rl.addLayout(th)
 
+        # Stage indicator — horizontal dots above pipeline bar
+        self.stage_indicator_widget = QWidget()
+        self.stage_indicator_layout = QHBoxLayout(self.stage_indicator_widget)
+        self.stage_indicator_layout.setContentsMargins(0, 0, 0, 0)
+        self.stage_indicator_layout.setSpacing(6)
+        self._stage_dot_labels = {}  # key -> QLabel
+        rl.addWidget(self.stage_indicator_widget)
+        rl.addSpacing(4)
+
         # Pipeline bar
         ph = QHBoxLayout()
         pl = QLabel("PIPELINE PROGRESS")
         pl.setFont(QFont("Arial", 8, QFont.Bold))
         pl.setStyleSheet(f"color:{SUBTEXT};letter-spacing:1px;")
         ph.addWidget(pl)
+        ph.addStretch()
+        self.pipeline_clock_label = QLabel("00:00")
+        self.pipeline_clock_label.setFont(QFont("Courier New", 9))
+        self.pipeline_clock_label.setStyleSheet(f"color:{BLUE};")
+        ph.addWidget(self.pipeline_clock_label)
         self.pipeline_pct_label = QLabel("—")
         self.pipeline_pct_label.setFont(QFont("Arial", 9))
         self.pipeline_pct_label.setStyleSheet(f"color:{SUBTEXT};")
@@ -1952,12 +2001,17 @@ class SAXWindow(QMainWindow):
         rl.addWidget(self.pipeline_bar)
         rl.addSpacing(6)
 
-        # Stage bar
+        # Stage bar — shows current stage name + timer
         sh = QHBoxLayout()
         sl = QLabel("CURRENT STAGE")
         sl.setFont(QFont("Arial", 8, QFont.Bold))
         sl.setStyleSheet(f"color:{SUBTEXT};letter-spacing:1px;")
         sh.addWidget(sl)
+        self.current_stage_name_label = QLabel("—")
+        self.current_stage_name_label.setFont(QFont("Arial", 9, QFont.Bold))
+        self.current_stage_name_label.setStyleSheet(f"color:{TEXT};")
+        sh.addWidget(self.current_stage_name_label)
+        sh.addStretch()
         self.stage_timer_label = QLabel("00:00")
         self.stage_timer_label.setFont(QFont("Courier New", 9))
         self.stage_timer_label.setStyleSheet(f"color:{BLUE};")
@@ -2034,6 +2088,55 @@ class SAXWindow(QMainWindow):
         self._calcs_expanded = not self._calcs_expanded
         self.stages_container.setVisible(self._calcs_expanded)
 
+    def _build_stage_dots(self, stages):
+        """Build horizontal stage indicator dots above pipeline bar."""
+        # Clear existing
+        while self.stage_indicator_layout.count():
+            item = self.stage_indicator_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        self._stage_dot_labels = {}
+
+        for key in stages:
+            label = STAGE_LABELS.get(key, key)
+            # Short label for display
+            short = label.split("—")[-1].strip() if "—" in label else label
+            # Dot + text
+            dot_widget = QWidget()
+            dot_layout = QHBoxLayout(dot_widget)
+            dot_layout.setContentsMargins(0, 0, 0, 0)
+            dot_layout.setSpacing(3)
+            dot = QLabel("⬜")
+            dot.setFont(QFont("Arial", 9))
+            dot.setStyleSheet(f"color:{SUBTEXT};")
+            txt = QLabel(short)
+            txt.setFont(QFont("Arial", 8))
+            txt.setStyleSheet(f"color:{SUBTEXT};")
+            dot_layout.addWidget(dot)
+            dot_layout.addWidget(txt)
+            self.stage_indicator_layout.addWidget(dot_widget)
+            self._stage_dot_labels[key] = (dot, txt)
+
+        self.stage_indicator_layout.addStretch()
+
+    def _update_stage_dot(self, key, state):
+        """state: 'running', 'done', 'warning', 'failed'"""
+        if key not in self._stage_dot_labels:
+            return
+        dot, txt = self._stage_dot_labels[key]
+        if state == "done":
+            dot.setText("✅")
+            txt.setStyleSheet(f"color:{GREEN};")
+        elif state == "running":
+            dot.setText("▶")
+            txt.setStyleSheet(f"color:{BLUE};font-weight:bold;")
+        elif state == "warning":
+            dot.setText("🟠")
+            txt.setStyleSheet(f"color:#FF8800;")
+        elif state == "failed":
+            dot.setText("❌")
+            txt.setStyleSheet(f"color:{RED};")
+
     def _build_stage_buttons(self, stages, enabled=True):
         for i in reversed(range(self.stages_layout.count())):
             w = self.stages_layout.itemAt(i).widget()
@@ -2054,8 +2157,8 @@ class SAXWindow(QMainWindow):
     def _re_enable_ui(self):
         self.stop_btn.setEnabled(True)
         self.load_btn.setEnabled(True)
-        self._stop_clock()
         if not self.running:
+            self._stop_clock()
             self.setup_calcs_btn.set_enabled(True)
             self.upload_btn.setEnabled(True)
             self.open_project_btn.setEnabled(True)
@@ -2161,6 +2264,13 @@ class SAXWindow(QMainWindow):
         self.completed_stages = set()
         self.project_name_label.setText(project_name)
         self.project_name_label.setStyleSheet(f"color:{GREEN};")
+        # Reset total clock for new project
+        self._total_seconds = 0
+        self.total_timer_label.setText("00:00")
+        self.total_time_label.setText(f"TOTAL TIME — Project #: {self.project_number} {self.project_name}")
+        self._pipeline_seconds = 0
+        self.pipeline_clock_label.setText("00:00")
+        self.pipeline_clock_label.setStyleSheet(f"color:{BLUE};")
         self.append_log(f"Project loaded: {project_name}")
         self.append_log("--- Running 01 — Project Info ---")
         self.load_btn.setEnabled(False)
@@ -2232,8 +2342,8 @@ class SAXWindow(QMainWindow):
         self._stage_seconds = 0
         self.stage_timer_label.setText("00:00")
         self.stage_timer_label.setStyleSheet(f"color:{BLUE};")
-        if not self._stage_clock.isActive():
-            self._stage_clock.start(1000)
+        self._stage_clock.stop()
+        self._stage_clock.start(1000)
 
     def _stop_clock(self):
         self._stage_clock.stop()
@@ -2251,12 +2361,18 @@ class SAXWindow(QMainWindow):
         secs = self._total_seconds % 60
         self.total_timer_label.setText(f"{mins:02d}:{secs:02d}")
 
+    def _tick_pipeline_clock(self):
+        self._pipeline_seconds += 1
+        mins = self._pipeline_seconds // 60
+        secs = self._pipeline_seconds % 60
+        self.pipeline_clock_label.setText(f"{mins:02d}:{secs:02d}")
+
     def set_pipeline_progress(self, current, total):
         if total == 0:
             return
         pct = int((current / total) * 100)
         self.pipeline_bar.setValue(pct)
-        self.pipeline_pct_label.setText(f"{current} / {total} stages")
+        self.pipeline_pct_label.setText(f"STAGES {current}/{total}")
         if current == total:
             self.pipeline_bar.setStyleSheet(
                 self._bar_style(GREEN, radius=6)
@@ -2266,7 +2382,7 @@ class SAXWindow(QMainWindow):
         if total == 0:
             return
         self._stage_target = int((step / total) * 100)
-        self.stage_step_label.setText(f"Step {step} / {total}")
+        self.stage_step_label.setText(f"STEPS {step}/{total}")
         if not self._stage_anim.isActive():
             self._stage_anim.start(20)
         if step == total:
@@ -2295,6 +2411,15 @@ class SAXWindow(QMainWindow):
                 f'<span style="color:#00FF88;font-family:Courier New;'
                 f'font-size:15px;font-weight:bold;">{message}</span>'
             )
+            # Update current stage name label
+            if message.startswith("--- Running"):
+                stage_name = message.replace("--- Running", "").replace("---", "").strip()
+                self.current_stage_name_label.setText(stage_name)
+                # Find key and mark dot as running
+                for key, lbl in STAGE_LABELS.items():
+                    if lbl == stage_name:
+                        self._update_stage_dot(key, "running")
+                        break
             return
         if any(w in message for w in ["ERROR", "FAILED", "EXCEPTION"]):
             color = RED
@@ -2321,6 +2446,12 @@ class SAXWindow(QMainWindow):
     def on_stage_done(self, key, success):
         if success:
             self.completed_stages.add(key)
+            if runner._stage_had_warning:
+                self._update_stage_dot(key, "warning")
+            else:
+                self._update_stage_dot(key, "done")
+        else:
+            self._update_stage_dot(key, "failed")
         btn = self.stage_buttons.get(key)
         if btn:
             if success:
@@ -2336,8 +2467,7 @@ class SAXWindow(QMainWindow):
     def stop_pipeline(self):
         runner.stop()
         self.running = False
-        self._total_clock.stop()
-        self.total_timer_label.setStyleSheet(f"color:{SUBTEXT};")
+        self._stop_pipeline_clock(success=False)
         self.append_log("=== PIPELINE STOPPED BY USER ===")
         QTimer.singleShot(200, self._re_enable_ui)
 
@@ -2415,6 +2545,7 @@ class SAXWindow(QMainWindow):
         self.stop_btn.setEnabled(True)
 
         def worker():
+            self._start_pipeline_clock()
             runner.run(key, self.project_number, force=force)
 
         threading.Thread(target=worker, daemon=True).start()
@@ -2437,12 +2568,16 @@ class SAXWindow(QMainWindow):
         self.stop_btn.setEnabled(True)
         self.pipeline_bar.setStyleSheet(self._bar_style(BLUE, radius=6))
         self.pipeline_bar.setValue(0)
-        # Start total runtime clock
-        self._total_seconds = 0
-        self.total_timer_label.setText("00:00")
-        self.total_timer_label.setStyleSheet(f"color:{GREEN};")
         self._total_clock.start(1000)
+
+        # Build stage dots
+        self._build_stage_dots(stages)
+        self._start_pipeline_clock()
+
         self.append_log(f"=== SETUP CALCS — {total} stages ===")
+        for i, stage in enumerate(stages, 1):
+            label = STAGE_LABELS.get(stage, stage)
+            self.append_log(f"  {i}. {label}")
 
         def worker():
             completed = 0
@@ -2460,6 +2595,8 @@ class SAXWindow(QMainWindow):
                 btn = self.stage_buttons.get(key)
                 if btn:
                     btn.set_running()
+                runner._current_stage_key = key
+                runner._stage_had_warning = False
                 signals.log.emit(
                     f"--- Running {STAGE_LABELS.get(key, key)} ---"
                 )
@@ -2472,10 +2609,7 @@ class SAXWindow(QMainWindow):
                         f"PIPELINE STOPPED — "
                         f"{STAGE_LABELS.get(key, key)} failed."
                     )
-                    QTimer.singleShot(0, lambda: (
-                        self._total_clock.stop(),
-                        self.total_timer_label.setStyleSheet(f"color:{RED};")
-                    ))
+                    QTimer.singleShot(0, lambda: self._stop_pipeline_clock(success=False))
                     break
 
                 # After TOT completes, check TOT status and extend pipeline
@@ -2515,11 +2649,21 @@ class SAXWindow(QMainWindow):
             self.active_stages = list(NORMAL_STAGES)
             self._build_stage_buttons(NORMAL_STAGES, enabled=False)
 
+    def _start_pipeline_clock(self):
+        self._pipeline_seconds = 0
+        self.pipeline_clock_label.setText("00:00")
+        self.pipeline_clock_label.setStyleSheet(f"color:{BLUE};")
+        self._pipeline_clock.start(1000)
+
+    def _stop_pipeline_clock(self, success=True):
+        self._pipeline_clock.stop()
+        color = GREEN if success else RED
+        self.pipeline_clock_label.setStyleSheet(f"color:{color};")
+
     def _after_run_all(self):
+        self.append_log("=== PIPELINE COMPLETE ===")
+        self._stop_pipeline_clock(success=True)
         self._re_enable_ui()
-        self._total_clock.stop()
-        self.total_timer_label.setStyleSheet(f"color:{SUBTEXT};")
-        self.append_log("=== SETUP CALCS COMPLETE ===")
 
 
 # =========================

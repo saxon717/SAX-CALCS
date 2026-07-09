@@ -34,6 +34,9 @@ project_name_only = (
 ui_folder           = get_ui_folder(project_root)
 calculations_folder = get_calc_folder(project_root)
 
+print("UI_STEP:Reading INFO file")
+sys.stdout.flush()
+
 info_data, info_path = read_info(project_root, project_number)
 if not info_path:
     raise Exception("INFO FILE NOT FOUND")
@@ -269,15 +272,12 @@ try:
         roof_snow = criteria_ws.range("D48").value
         if roof_snow is not None:
             lat_w_ws = lat_wb.sheets["W"]
-            # Briefly make app visible to allow write
-            app.visible = True
             lat_w_ws.range("B6").value = roof_snow
-            app.visible = False
             print(f"ROOF SNOW LOAD -> LAT W!B6: {roof_snow}")
         else:
             print("WARNING: Criteria D48 is empty — LAT W!B6 not updated")
     except Exception as e:
-        print(f"WARNING: Snow load writeback failed: {e}")
+        print(f"UI_LOG_WARNING_KEY:tot_lat:Snow load writeback to LAT W!B6 failed: {e}")
 
     # Navigate to cover and save both
     vert_cover.activate()

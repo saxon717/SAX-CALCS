@@ -32,6 +32,9 @@ project_name_only = (
 ui_folder           = get_ui_folder(project_root)
 calculations_folder = get_calc_folder(project_root)
 
+print("UI_STEP:Reading INFO file")
+sys.stdout.flush()
+
 info_data, info_path = read_info(project_root, project_number)
 if not info_path:
     raise Exception("INFO FILE NOT FOUND")
@@ -165,7 +168,12 @@ try:
 except Exception as e:
     print(f"WARNING: Seismic Criteria sheet error: {e}")
 
+print("UI_STEP:Inserting screenshots")
+sys.stdout.flush()
+
 cover_ws.activate()
+print("UI_STEP:Saving Excel")
+sys.stdout.flush()
 wb.save()
 print("TOT LAT COMPLETE")
 

@@ -63,7 +63,7 @@ YEAR_FOLDER_SUFFIX = "-XXX"
 # BROWSER SETTINGS
 # =========================
 
-HEADLESS = True  # True = run in background, False = show browser
+HEADLESS = False  # True = run in background, False = show browser
 
 # =========================
 # DATE HELPER
@@ -152,7 +152,7 @@ def read_info(project_root, project_number):
 def update_info(info_path, project_root, fields_dict):
     """
     Update specific fields in INFO file.
-    Archives old file, saves new one with today's date.
+    Moves old file to ARCHIVE, saves updated file with today's date.
     fields_dict: {KEY: value} — only updates specified keys.
     """
     if not info_path or not os.path.exists(info_path):
@@ -163,43 +163,25 @@ def update_info(info_path, project_root, fields_dict):
         lines = f.readlines()
 
     # Update fields
+    fields_copy = dict(fields_dict)
     updated = []
     for line in lines:
         if "=" in line:
             key = line.partition("=")[0].strip()
-            if key + "=" in fields_dict or key in fields_dict:
-                k = key if key in fields_dict else key + "="
-                val = fields_dict.get(k, fields_dict.get(key + "=", ""))
-                updated.append(f"{key}={val}\n")
-                # Remove from dict so we know what's been handled
-                fields_dict.pop(k, None)
-                fields_dict.pop(key, None)
-                fields_dict.pop(key + "=", None)
+            if key in fields_copy:
+                updated.append(f"{key}={fields_copy.pop(key)}\n")
+            elif key + "=" in fields_copy:
+                updated.append(f"{key}={fields_copy.pop(key + '=')}\n")
             else:
                 updated.append(line)
         else:
             updated.append(line)
 
-    # Append any remaining new fields
-    for key, val in fields_dict.items():
-        clean_key = key.rstrip("=")
-        updated.append(f"{clean_key}={val}\n")
+    # Append any new fields not already in file
+    for key, val in fields_copy.items():
+        updated.append(f"{key.rstrip('=')}={val}\n")
 
-    # Archive old file
-    archive_folder = get_archive_folder(project_root)
-    old_name       = os.path.basename(info_path)
-    archive_path   = os.path.join(archive_folder, old_name)
-    # Avoid overwriting archive if same name
-    if os.path.exists(archive_path):
-        base, ext    = os.path.splitext(old_name)
-        counter      = 2
-        archive_path = os.path.join(archive_folder, f"{base} ({counter}){ext}")
-        while os.path.exists(archive_path):
-            counter     += 1
-            archive_path = os.path.join(archive_folder, f"{base} ({counter}){ext}")
-    shutil.copy2(info_path, archive_path)
-
-    # Build new filename with today's date
+    # Get project number from file
     project_number = ""
     for line in updated:
         if line.startswith("PROJECT_NUMBER="):
@@ -210,13 +192,19 @@ def update_info(info_path, project_root, fields_dict):
     new_filename = f"{project_number} INFO - {today_str()}.txt"
     new_path     = os.path.join(ui_folder, new_filename)
 
-    # Remove old file
-    try:
-        os.remove(info_path)
-    except:
-        pass
+    # Archive old file first (move to ARCHIVE folder)
+    archive_folder = get_archive_folder(project_root)
+    old_name       = os.path.basename(info_path)
+    archive_path   = os.path.join(archive_folder, old_name)
+    if os.path.exists(archive_path):
+        base, ext = os.path.splitext(old_name)
+        counter   = 2
+        while os.path.exists(archive_path):
+            archive_path = os.path.join(archive_folder, f"{base} ({counter}){ext}")
+            counter += 1
+    shutil.move(info_path, archive_path)
 
-    # Write new file
+    # Write new file with today's date
     with open(new_path, "w", encoding="utf-8") as f:
         f.writelines(updated)
 
