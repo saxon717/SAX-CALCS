@@ -18,6 +18,7 @@ from config import (
     TEMPLATE_FOLDER,
     LAT_TEMPLATE_NAME,
     YEAR_FOLDER_SUFFIX,
+    cleanup_xl_locks,
 )
 
 
@@ -68,6 +69,7 @@ zip_code = info_data.get("ZIP_CODE", "")
 county = info_data.get("COUNTY", "")
 verified_apn = info_data.get("VERIFIED_APN", "")
 tot_status = info_data.get("TOT", "")
+tot_snow_load = info_data.get("TOT_SNOW_LOAD", "")
 
 
 # =========================
@@ -296,6 +298,15 @@ else:
 cover_ws.activate()
 wb.app.api.ActiveWindow.ScrollRow    = 1
 wb.app.api.ActiveWindow.ScrollColumn = 1
+
+# Write snow load to W!B6
+if tot_snow_load:
+    try:
+        _seismic_ws = wb.sheets["Seismic Criteria"]
+        _seismic_ws.range("I2").value = int(tot_snow_load)
+        print(f"SNOW LOAD -> Seismic Criteria!I2: {tot_snow_load}")
+    except Exception as e:
+        print(f"WARNING: Seismic Criteria I2 write failed: {e}")
 
 wb.save()
 print("LAT COMPLETE")

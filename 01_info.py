@@ -234,6 +234,18 @@ for line in lines:
                 apn = f"{core_digits[0:3]}-{core_digits[3:6]}-{core_digits[6:9]}"
                 if raw_apn != apn:
                     apn_warning = True
+            elif len(apn_digits) == 8:
+                # 8 digits — show popup immediately, no auto-change
+                raw_8 = f"{apn_digits[0:3]}-{apn_digits[3:6]}-{apn_digits[6:8]}"
+                print(f"UI_CONFIRM_APN:{raw_8}||PADDED")
+                sys.stdout.flush()
+                response = sys.stdin.readline().strip()
+                if response and response != "CANCELLED":
+                    apn = response
+                    print(f"APN CONFIRMED BY USER: {apn}")
+                else:
+                    apn = raw_8
+                    print(f"APN KEPT AS ENTERED: {apn}")
             else:
                 print("WARNING: NOT ENOUGH DIGITS FOR APN")
         break

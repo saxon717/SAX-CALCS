@@ -300,3 +300,34 @@ def make_output_path(calc_folder, project_number, project_name, suffix, extensio
         path = os.path.join(calc_folder, f"{base_name} ({counter}){extension}")
         counter += 1
     return path
+
+# =========================
+# EXCEL CLEANUP HELPER
+# =========================
+
+def cleanup_xl_locks(folder):
+    """Remove stale Excel lock files (~$) from a folder."""
+    removed = []
+    try:
+        for file in os.listdir(folder):
+            if file.startswith("~$") and file.endswith((".xlsm", ".xlsx", ".xls")):
+                lock_path = os.path.join(folder, file)
+                try:
+                    os.remove(lock_path)
+                    removed.append(file)
+                except:
+                    pass
+    except:
+        pass
+    return removed
+
+def kill_orphaned_excel():
+    """Kill Excel processes that have no visible window (orphaned)."""
+    try:
+        import subprocess
+        subprocess.run(
+            ["taskkill", "/F", "/IM", "EXCEL.EXE"],
+            capture_output=True
+        )
+    except:
+        pass

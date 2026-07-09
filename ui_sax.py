@@ -7,7 +7,7 @@ import json
 
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout,
-    QHBoxLayout, QLabel, QLineEdit, QPushButton,
+    QHBoxLayout, QGridLayout, QLabel, QLineEdit, QPushButton,
     QTextEdit, QProgressBar, QDialog, QFrame,
     QComboBox, QCompleter,
 )
@@ -220,6 +220,7 @@ class Signals(QObject):
     req_info_exists   = Signal(str)
     req_upload_confirm  = Signal(str)   # file already on Monday — ask to re-upload
     req_xl_complete     = Signal(str)   # XL files done — pipe-delimited paths
+    req_xl_select       = Signal(str)   # XL file selection — type|file1|file2|...
     req_tot_manual      = Signal(str)   # TOT inconclusive or unmatched — manual Y/N
     req_asce_exists     = Signal(str)   # ASCE PDF already found — skip or rerun
     req_seismic_exists  = Signal(str)   # Seismic PDF already found — skip or rerun
@@ -430,7 +431,7 @@ class APNWidget(QWidget):
         return (
             len(self.b1.text()) == 3
             and len(self.b2.text()) == 3
-            and len(self.b3.text()) == 3
+            and len(self.b3.text()) in (2, 3)
         )
 
 # =========================
@@ -686,19 +687,31 @@ class ManualAddressDialog(SAXDialog):
 
 
 class APNDialog(SAXDialog):
-    def __init__(self, parent, current_apn, contract_pdf=""):
+    def __init__(self, parent, current_apn, contract_pdf="", padded=False):
         super().__init__(parent, "Verify APN")
         self._contract_pdf = contract_pdf
         self.result_apn = current_apn
-        self.main_layout.addWidget(self._title_label("Verify the APN."))
-        self.main_layout.addWidget(
-            self._info_box("APN FROM INFO FILE", current_apn)
-        )
-        self.main_layout.addWidget(
-            self._body_label(
-                "If correct, click Confirm. "
-                "If not, edit the boxes below."
+
+        if padded:
+            self.main_layout.addWidget(
+                self._title_label("APN has 8 digits — please verify.")
             )
+            self.main_layout.addWidget(
+                self._body_label(
+                    "Enter the correct APN below and confirm."
+                )
+            )
+        else:
+            self.main_layout.addWidget(self._title_label("Verify the APN."))
+            self.main_layout.addWidget(
+                self._body_label(
+                    "If correct, click Confirm. "
+                    "If not, edit the boxes below."
+                )
+            )
+
+        self.main_layout.addWidget(
+            self._info_box("APN FROM CONTRACT", current_apn)
         )
         apn_lbl = QLabel("APN")
         apn_lbl.setFont(QFont("Arial", 9, QFont.Bold))
@@ -737,7 +750,7 @@ class APNDialog(SAXDialog):
     def _confirm(self):
         if not self.apn_widget.is_valid():
             self.error_label.setText(
-                "APN must be XXX-XXX-XXX with 3 digits each."
+                "APN must be XXX-XXX-XX or XXX-XXX-XXX."
             )
             return
         self.result_apn = self.apn_widget.get_apn()
@@ -1062,6 +1075,74 @@ class TOTManualDialog(SAXDialog):
         self.main_layout.addLayout(row)
 
 
+
+# =========================
+# XL FILE SELECT DIALOG
+# =========================
+
+class XLSelectDialog(SAXDialog):
+    """Select existing XL file to update, or create new from template."""
+    def __init__(self, parent, files, file_type="XL"):
+        super().__init__(parent, f"{file_type} File Found")
+        from datetime import datetime
+
+        self.files         = files
+        self.selected_file = None
+        self._row_widgets  = []
+
+        self.main_layout.addWidget(
+            self._title_label(f"{len(files)} existing {file_type} file(s) found.")
+        )
+        self.main_layout.addWidget(
+            self._body_label("Select a file to update, or create new from template.")
+        )
+
+        for f in files:
+            try:
+                modified = os.path.getmtime(f)
+                date_str = datetime.fromtimestamp(modified).strftime("%m/%d/%y %I:%M %p")
+            except:
+                date_str = ""
+
+            file_box = self._info_box(
+                "FILE", f"{os.path.basename(f)}  —  {date_str}"
+            )
+            file_box.setCursor(Qt.PointingHandCursor)
+            file_box.mousePressEvent = lambda e, fp=f, w=file_box: self._select(fp, w)
+            self.main_layout.addWidget(file_box)
+            self._row_widgets.append((f, file_box))
+
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        row.addStretch()
+
+        self.update_btn = QPushButton("UPDATE SELECTED")
+        self.update_btn.setStyleSheet(DIALOG_BTN_BLUE)
+        self.update_btn.setEnabled(False)
+        self.update_btn.clicked.connect(lambda: self.done(2))
+
+        new_btn = QPushButton("CREATE NEW FROM TEMPLATE")
+        new_btn.setStyleSheet(DIALOG_BTN_GREEN)
+        new_btn.clicked.connect(self.accept)
+        new_btn.setDefault(True)
+
+        row.addWidget(self.update_btn)
+        row.addWidget(new_btn)
+        self.main_layout.addLayout(row)
+
+    def _select(self, filepath, widget):
+        for f, w in self._row_widgets:
+            w.setStyleSheet(w.styleSheet().replace(
+                f"border:2px solid {BLUE}", f"border:1px solid {BORDER}"
+            ))
+        widget.setStyleSheet(widget.styleSheet().replace(
+            f"border:1px solid {BORDER}", f"border:2px solid {BLUE}"
+        ))
+        self.selected_file = filepath
+        self.update_btn.setEnabled(True)
+        self.update_btn.setText(f"UPDATE SELECTED")
+
+
 # =========================
 # XL COMPLETE DIALOG
 # =========================
@@ -1167,8 +1248,8 @@ class SplitButton(QWidget):
         )
         self.run_btn   = QPushButton(f"▶▶  {label}")
         self.arrow_btn = QPushButton("▼")
-        self.run_btn.setMinimumHeight(42)
-        self.arrow_btn.setMinimumHeight(42)
+        self.run_btn.setMinimumHeight(34)
+        self.arrow_btn.setMinimumHeight(34)
         self.arrow_btn.setFixedWidth(36)
         self.run_btn.setStyleSheet(run_style)
         self.arrow_btn.setStyleSheet(arrow_style)
@@ -1455,6 +1536,17 @@ class ScriptRunner(QObject):
                 continue
 
             # ── WARNING LOG — show in yellow in status log ──
+            # ── XL FILE SELECT — update existing or create new ──
+            if line.startswith("UI_XL_SELECT:"):
+                payload = line.replace("UI_XL_SELECT:", "").strip()
+                signals.req_xl_select.emit(payload)
+                result = self._wait_for_result(key, timeout=300)
+                if result is None:
+                    return False
+                self._proc.stdin.write(result + "\n")
+                self._proc.stdin.flush()
+                continue
+
             # ── WARNING with specific stage key ──
             if line.startswith("UI_LOG_WARNING_KEY:"):
                 payload = line.replace("UI_LOG_WARNING_KEY:", "").strip()
@@ -1605,6 +1697,7 @@ class SAXWindow(QMainWindow):
         signals.req_info_exists.connect(self.handle_info_exists)
         signals.req_upload_confirm.connect(self.handle_upload_confirm)
         signals.req_xl_complete.connect(self.handle_xl_complete)
+        signals.req_xl_select.connect(self.handle_xl_select)
         signals.reset_bars.connect(self._reset_stage_bars)
         signals.req_tot_manual.connect(self.handle_tot_manual)
         signals.req_asce_exists.connect(self.handle_asce_exists)
@@ -1644,7 +1737,8 @@ class SAXWindow(QMainWindow):
         parts        = payload.split("|")
         current_apn  = parts[0] if len(parts) > 0 else ""
         contract_pdf = parts[1] if len(parts) > 1 else ""
-        dlg = APNDialog(self, current_apn, contract_pdf)
+        padded       = parts[2] == "PADDED" if len(parts) > 2 else False
+        dlg = APNDialog(self, current_apn, contract_pdf, padded=padded)
         if dlg.exec() == QDialog.Accepted:
             runner.put_result(dlg.result_apn)
         else:
@@ -1711,6 +1805,20 @@ class SAXWindow(QMainWindow):
             # Pass back the selected file path so 01_info.py knows which to overwrite
             selected = dlg.selected_file or files[-1]
             runner.put_result(f"OVERWRITE:{selected}")
+        else:
+            runner.put_result("NEW")
+
+    def handle_xl_select(self, payload):
+        parts     = payload.split("|")
+        file_type = parts[0].strip()
+        files     = [p.strip() for p in parts[1:] if p.strip()]
+        if not files:
+            runner.put_result("NEW")
+            return
+        dlg = XLSelectDialog(self, files, file_type)
+        result = dlg.exec()
+        if result == 2 and dlg.selected_file:
+            runner.put_result(f"UPDATE:{dlg.selected_file}")
         else:
             runner.put_result("NEW")
 
@@ -1831,23 +1939,36 @@ class SAXWindow(QMainWindow):
         self.load_btn.clicked.connect(self.load_project)
         ll.addWidget(self.load_btn)
 
-        self.open_project_btn = QPushButton("📁  OPEN PROJECT")
-        self.open_project_btn.setMinimumHeight(36)
-        self.open_project_btn.setStyleSheet(
+        open_row = QHBoxLayout()
+        open_row.setSpacing(4)
+
+        open_btn_style = (
             f"QPushButton{{background-color:{BTN_DEFAULT};color:{TEXT};"
-            f"border:1px solid {BORDER};border-radius:6px;padding:8px 14px;"
-            f"font-family:Arial;font-size:12px;text-align:left;}}"
+            f"border:1px solid {BORDER};border-radius:6px;padding:6px 8px;"
+            f"font-family:Arial;font-size:11px;text-align:left;}}"
             f"QPushButton:hover{{background-color:{BTN_HOVER};border-color:{BLUE};}}"
             f"QPushButton:disabled{{background-color:#2A2A3E;"
             f"color:{SUBTEXT};border-color:#333355;}}"
         )
+
+        self.open_project_btn = QPushButton("📁  OPEN PROJECT")
+        self.open_project_btn.setMinimumHeight(32)
+        self.open_project_btn.setStyleSheet(open_btn_style)
         self.open_project_btn.setEnabled(False)
         self.open_project_btn.clicked.connect(self.open_project_folder)
-        ll.addWidget(self.open_project_btn)
-        ll.addSpacing(6)
+        open_row.addWidget(self.open_project_btn)
+
+        self.open_contract_btn = QPushButton("📝  OPEN CONTRACT")
+        self.open_contract_btn.setMinimumHeight(32)
+        self.open_contract_btn.setStyleSheet(open_btn_style)
+        self.open_contract_btn.setEnabled(False)
+        self.open_contract_btn.clicked.connect(self.open_contract_pdf)
+        open_row.addWidget(self.open_contract_btn)
+
+        ll.addLayout(open_row)
 
         self.upload_btn = QPushButton("▶▶  UPLOAD CONTRACT")
-        self.upload_btn.setMinimumHeight(42)
+        self.upload_btn.setMinimumHeight(34)
         self.upload_btn.setStyleSheet(
             f"QPushButton{{background-color:{BTN_DEFAULT};color:{TEXT};"
             f"border:1px solid {BORDER};border-radius:8px;padding:11px 16px;"
@@ -1864,7 +1985,7 @@ class SAXWindow(QMainWindow):
         ll.addWidget(self.upload_btn)
 
         self.apn_btn = QPushButton("▶▶  APN VERIFICATION")
-        self.apn_btn.setMinimumHeight(42)
+        self.apn_btn.setMinimumHeight(34)
         self.apn_btn.setStyleSheet(
             f"QPushButton{{background-color:{BTN_DEFAULT};color:{TEXT};"
             f"border:1px solid {BORDER};border-radius:8px;padding:11px 16px;"
@@ -1878,7 +1999,7 @@ class SAXWindow(QMainWindow):
         ll.addWidget(self.apn_btn)
 
         self.tot_btn = QPushButton("▶▶  TOT VERIFICATION")
-        self.tot_btn.setMinimumHeight(42)
+        self.tot_btn.setMinimumHeight(34)
         self.tot_btn.setStyleSheet(
             f"QPushButton{{background-color:{BTN_DEFAULT};color:{TEXT};"
             f"border:1px solid {BORDER};border-radius:8px;padding:11px 16px;"
@@ -1895,20 +2016,12 @@ class SAXWindow(QMainWindow):
         self.setup_calcs_btn.set_enabled(False)
         self.setup_calcs_btn.run_clicked.connect(self.run_all)
         self.setup_calcs_btn.arrow_clicked.connect(
-            self._toggle_calcs_stages
+            self._show_stages_popup
         )
         ll.addWidget(self.setup_calcs_btn)
 
-        self.stages_container = QWidget()
-        self.stages_container.setVisible(False)
-        self.stages_container.setStyleSheet("background:transparent;")
-        self.stages_layout = QVBoxLayout(self.stages_container)
-        self.stages_layout.setContentsMargins(0, 2, 0, 2)
-        self.stages_layout.setSpacing(4)
-        ll.addWidget(self.stages_container)
-
         self.setup_revit_btn = QPushButton("▶▶  SETUP REVIT")
-        self.setup_revit_btn.setMinimumHeight(42)
+        self.setup_revit_btn.setMinimumHeight(34)
         self.setup_revit_btn.setStyleSheet(
             f"QPushButton{{background-color:{PANEL};color:#555577;"
             f"border:1px solid #333355;border-radius:8px;padding:11px 16px;"
@@ -1929,9 +2042,20 @@ class SAXWindow(QMainWindow):
         self.refresh_btn.clicked.connect(self.refresh_projects)
         ll.addWidget(self.refresh_btn)
 
-        self.headless_btn = QPushButton("⬛  Work in Background: OFF")
+        self.clean_locks_btn = QPushButton("🔓  Clean Excel Locks")
+        self.clean_locks_btn.setStyleSheet(
+            f"QPushButton{{background-color:{BTN_DEFAULT};color:{SUBTEXT};"
+            f"border:1px solid #333355;border-radius:6px;padding:6px;"
+            f"font-family:Arial;font-size:11px;}}"
+            f"QPushButton:hover{{color:{YELLOW};border-color:{YELLOW};}}"
+        )
+        self.clean_locks_btn.setEnabled(False)
+        self.clean_locks_btn.clicked.connect(self.clean_excel_locks)
+        ll.addWidget(self.clean_locks_btn)
+
+        self.headless_btn = QPushButton("🟢  Work in Background: ON")
         self.headless_btn.setCheckable(True)
-        self.headless_btn.setChecked(False)
+        self.headless_btn.setChecked(True)
         self.headless_btn.setStyleSheet(
             f"QPushButton{{background-color:{BTN_DEFAULT};"
             f"color:{SUBTEXT};border:1px solid #333355;"
@@ -1968,10 +2092,11 @@ class SAXWindow(QMainWindow):
 
         # Stage indicator — horizontal dots above pipeline bar
         self.stage_indicator_widget = QWidget()
-        self.stage_indicator_layout = QHBoxLayout(self.stage_indicator_widget)
+        self.stage_indicator_layout = QGridLayout(self.stage_indicator_widget)
         self.stage_indicator_layout.setContentsMargins(0, 0, 0, 0)
-        self.stage_indicator_layout.setSpacing(6)
-        self._stage_dot_labels = {}  # key -> QLabel
+        self.stage_indicator_layout.setSpacing(2)
+        self.stage_indicator_layout.setHorizontalSpacing(8)
+        self._stage_dot_labels = {}  # key -> (dot_label, txt_label)
         rl.addWidget(self.stage_indicator_widget)
         rl.addSpacing(4)
 
@@ -2084,40 +2209,94 @@ class SAXWindow(QMainWindow):
             f"border-radius:{radius}px;}}"
         )
 
-    def _toggle_calcs_stages(self):
-        self._calcs_expanded = not self._calcs_expanded
-        self.stages_container.setVisible(self._calcs_expanded)
+    def _show_stages_popup(self):
+        """Show floating stage list as a proper popup menu."""
+        from PySide6.QtWidgets import QMenu
+        from PySide6.QtGui import QAction
 
-    def _build_stage_dots(self, stages):
-        """Build horizontal stage indicator dots above pipeline bar."""
-        # Clear existing
+        menu = QMenu(self)
+        menu.setStyleSheet(
+            f"QMenu{{background-color:{PANEL};color:{TEXT};"
+            f"border:1px solid {BORDER};border-radius:8px;padding:4px;}}"
+            f"QMenu::item{{padding:8px 16px;font-family:Arial;font-size:13px;}}"
+            f"QMenu::item:selected{{background-color:{BTN_HOVER};color:{GREEN};}}"
+            f"QMenu::item:disabled{{color:{SUBTEXT};}}"
+            f"QMenu::separator{{height:1px;background:{BORDER};margin:2px 8px;}}"
+        )
+
+        for key in self.active_stages:
+            label  = STAGE_LABELS.get(key, key)
+            action = QAction(label, self)
+            btn    = self.stage_buttons.get(key)
+            action.setEnabled(True)
+            action.triggered.connect(
+                lambda checked=False, k=key: self.run_single(k)
+            )
+            menu.addAction(action)
+
+        # Show below the Setup Calcs button
+        btn_pos  = self.setup_calcs_btn.mapToGlobal(
+            self.setup_calcs_btn.rect().bottomLeft()
+        )
+        menu.exec(btn_pos)
+
+    def _toggle_calcs_stages(self):
+        pass  # kept for compatibility
+
+    def _build_stage_dots_greyed(self):
+        """Show both TOT and Normal stages greyed — pre-TOT determination."""
+        all_stages = ["apn", "tot", "tot_location", "tot_seismic", "tot_lat", "tot_vert"]
         while self.stage_indicator_layout.count():
             item = self.stage_indicator_layout.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
         self._stage_dot_labels = {}
 
-        for key in stages:
+        for i, key in enumerate(all_stages):
             label = STAGE_LABELS.get(key, key)
-            # Short label for display
             short = label.split("—")[-1].strip() if "—" in label else label
-            # Dot + text
             dot_widget = QWidget()
             dot_layout = QHBoxLayout(dot_widget)
             dot_layout.setContentsMargins(0, 0, 0, 0)
             dot_layout.setSpacing(3)
             dot = QLabel("⬜")
-            dot.setFont(QFont("Arial", 9))
+            dot.setFont(QFont("Arial", 8))
+            dot.setStyleSheet(f"color:#333355;")
+            txt = QLabel(short)
+            txt.setFont(QFont("Arial", 8))
+            txt.setStyleSheet(f"color:#333355;")
+            dot_layout.addWidget(dot)
+            dot_layout.addWidget(txt)
+            row, col = divmod(i, 3)
+            self.stage_indicator_layout.addWidget(dot_widget, row, col)
+            self._stage_dot_labels[key] = (dot, txt)
+
+    def _build_stage_dots(self, stages):
+        """Build grid stage indicator dots above pipeline bar — 3 per row."""
+        while self.stage_indicator_layout.count():
+            item = self.stage_indicator_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        self._stage_dot_labels = {}
+
+        for i, key in enumerate(stages):
+            label = STAGE_LABELS.get(key, key)
+            short = label.split("—")[-1].strip() if "—" in label else label
+            dot_widget = QWidget()
+            dot_layout = QHBoxLayout(dot_widget)
+            dot_layout.setContentsMargins(0, 0, 0, 0)
+            dot_layout.setSpacing(3)
+            dot = QLabel("⬜")
+            dot.setFont(QFont("Arial", 8))
             dot.setStyleSheet(f"color:{SUBTEXT};")
             txt = QLabel(short)
             txt.setFont(QFont("Arial", 8))
             txt.setStyleSheet(f"color:{SUBTEXT};")
             dot_layout.addWidget(dot)
             dot_layout.addWidget(txt)
-            self.stage_indicator_layout.addWidget(dot_widget)
+            row, col = divmod(i, 3)
+            self.stage_indicator_layout.addWidget(dot_widget, row, col)
             self._stage_dot_labels[key] = (dot, txt)
-
-        self.stage_indicator_layout.addStretch()
 
     def _update_stage_dot(self, key, state):
         """state: 'running', 'done', 'warning', 'failed'"""
@@ -2138,10 +2317,8 @@ class SAXWindow(QMainWindow):
             txt.setStyleSheet(f"color:{RED};")
 
     def _build_stage_buttons(self, stages, enabled=True):
-        for i in reversed(range(self.stages_layout.count())):
-            w = self.stages_layout.itemAt(i).widget()
-            if w:
-                w.deleteLater()
+        # Stage buttons are now only used for status tracking
+        # Visual list is shown via floating popup menu
         self.stage_buttons = {}
         for key in stages:
             btn = StageButton(key)
@@ -2151,7 +2328,6 @@ class SAXWindow(QMainWindow):
                 )
                 if enabled:
                     btn.set_enabled_active(True)
-            self.stages_layout.addWidget(btn)
             self.stage_buttons[key] = btn
 
     def _re_enable_ui(self):
@@ -2162,8 +2338,10 @@ class SAXWindow(QMainWindow):
             self.setup_calcs_btn.set_enabled(True)
             self.upload_btn.setEnabled(True)
             self.open_project_btn.setEnabled(True)
+            self.open_contract_btn.setEnabled(True)
             self.apn_btn.setEnabled(True)
             self.tot_btn.setEnabled(True)
+            self.clean_locks_btn.setEnabled(True)
             for btn in self.stage_buttons.values():
                 if btn.key not in COMING_SOON:
                     btn.set_enabled_active(True)
@@ -2211,6 +2389,8 @@ class SAXWindow(QMainWindow):
 
     def _after_refresh(self):
         self.populate_projects()
+        self.project_input.update()
+        self.project_input.repaint()
         self.refresh_btn.setEnabled(True)
         self.refresh_btn.setText("⟳  Refresh Projects")
         self.append_log("Project list updated — Done.")
@@ -2239,6 +2419,26 @@ class SAXWindow(QMainWindow):
                 f.write(content)
         except Exception as e:
             self.append_log(f"ERROR: Could not update config: {e}")
+
+    def clean_excel_locks(self):
+        if not self.project_root:
+            return
+        from config import cleanup_xl_locks, get_calc_folder
+        calc_folder = get_calc_folder(self.project_root)
+        removed     = cleanup_xl_locks(calc_folder)
+        if removed:
+            self.append_log(f"Removed {len(removed)} lock file(s): {', '.join(removed)}")
+        else:
+            self.append_log("No Excel lock files found.")
+
+    def open_contract_pdf(self):
+        from config import read_info
+        info_data, _ = read_info(self.project_root, self.project_number)
+        pdf = info_data.get("CONTRACT_PDF", "")
+        if pdf and os.path.exists(pdf):
+            os.startfile(pdf)
+        else:
+            self.append_log("WARNING: Contract PDF not found in INFO file.")
 
     def open_project_folder(self):
         if self.project_root and os.path.exists(self.project_root):
@@ -2277,6 +2477,7 @@ class SAXWindow(QMainWindow):
         self.setup_calcs_btn.set_enabled(False)
         self.upload_btn.setEnabled(False)
         self.open_project_btn.setEnabled(False)
+        self.open_contract_btn.setEnabled(False)
         self.apn_btn.setEnabled(False)
         self.tot_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
@@ -2308,22 +2509,27 @@ class SAXWindow(QMainWindow):
             self.append_log("TOT: Y — TOT workflow loaded")
             self.active_stages = list(TOT_STAGES)
             self._build_stage_buttons(TOT_STAGES, enabled=True)
+            self._build_stage_dots(TOT_STAGES)
         elif tot == "N":
             self.tot_badge.setText("⬡  NORMAL WORKFLOW")
             self.tot_badge.setStyleSheet(f"color:{BLUE};")
             self.append_log("TOT: N — Normal workflow loaded")
             self.active_stages = list(NORMAL_STAGES)
             self._build_stage_buttons(NORMAL_STAGES, enabled=True)
+            self._build_stage_dots(NORMAL_STAGES)
         else:
             self.tot_badge.setText("⬡  TOT unknown — run APN & TOT first")
             self.tot_badge.setStyleSheet(f"color:{SUBTEXT};")
             self.append_log("TOT not yet determined.")
             self.active_stages = ["apn", "tot"]
             self._build_stage_buttons(["apn", "tot"], enabled=True)
+            # Show all TOT stages greyed — will update live when TOT confirmed
+            self._build_stage_dots_greyed()
         self._reset_stage_bars()
         self.setup_calcs_btn.set_enabled(True)
         self.upload_btn.setEnabled(True)
         self.open_project_btn.setEnabled(True)
+        self.open_contract_btn.setEnabled(True)
         self.apn_btn.setEnabled(True)
         self.tot_btn.setEnabled(True)
 
@@ -2643,11 +2849,13 @@ class SAXWindow(QMainWindow):
             self.tot_badge.setStyleSheet(f"color:{YELLOW};")
             self.active_stages = list(TOT_STAGES)
             self._build_stage_buttons(TOT_STAGES, enabled=False)
+            self._build_stage_dots(TOT_STAGES)
         else:
             self.tot_badge.setText("⬡  NORMAL WORKFLOW")
             self.tot_badge.setStyleSheet(f"color:{BLUE};")
             self.active_stages = list(NORMAL_STAGES)
             self._build_stage_buttons(NORMAL_STAGES, enabled=False)
+            self._build_stage_dots(NORMAL_STAGES)
 
     def _start_pipeline_clock(self):
         self._pipeline_seconds = 0
@@ -2676,4 +2884,6 @@ if __name__ == "__main__":
     window = SAXWindow()
     window.populate_projects()
     window.show()
+    # Auto-refresh cache in background on startup
+    QTimer.singleShot(500, window.refresh_projects)
     sys.exit(app.exec())

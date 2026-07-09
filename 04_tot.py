@@ -282,19 +282,6 @@ with sync_playwright() as p:
                             pass
 
                         # Extract snow load value
-                        try:
-                            snow_match = re.search(
-                                r"GROUND SNOWLOAD\s*\(PSF\)\s*(\d+)",
-                                page_text.upper()
-                            )
-                            if snow_match:
-                                tot_snow_load = snow_match.group(1)
-                                print(f"SNOW LOAD EXTRACTED: {tot_snow_load} PSF")
-                            else:
-                                print("WARNING: Could not extract snow load value")
-                        except Exception as e:
-                            print(f"SNOW LOAD EXTRACTION ERROR: {e}")
-
                         # Click next arrow — this navigates to snow load page
                         next_sel = (
                             "#map_root > div.esriPopupMobile > "
