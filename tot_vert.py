@@ -319,17 +319,7 @@ try:
     else:
         print("WARNING: Location screenshot not found")
 
-    # Snow load writeback — VERT Criteria D48 -> LAT W!M5
-    try:
-        roof_snow = criteria_ws.range("D48").value
-        if roof_snow is not None:
-            lat_w_ws = lat_wb.sheets["W"]
-            lat_w_ws.range("M5").value = roof_snow
-            print(f"ROOF SNOW LOAD -> LAT W!M5: {roof_snow}")
-        else:
-            print("WARNING: Criteria D48 is empty — LAT W!B6 not updated")
-    except Exception as e:
-        print(f"UI_LOG_WARNING_KEY:tot_lat:Snow load writeback to LAT W!M5 failed: {e}")
+    # Snow load writeback removed — LAT writes I2 directly from INFO file
 
     # Navigate to cover and save both
     vert_cover.activate()
