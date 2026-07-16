@@ -12,10 +12,79 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout,
     QHBoxLayout, QGridLayout, QLabel, QLineEdit, QPushButton,
     QTextEdit, QProgressBar, QDialog, QFrame,
-    QComboBox, QCompleter,
+    QComboBox, QCompleter, QLayout, QSizePolicy,
 )
-from PySide6.QtCore import Qt, Signal, QObject, QTimer
+from PySide6.QtCore import Qt, Signal, QObject, QTimer, QRect, QSize, QPoint
 from PySide6.QtGui import QFont, QIntValidator
+
+
+# =========================
+# FLOW LAYOUT — wraps items left-to-right like words on a page
+# =========================
+
+class FlowLayout(QLayout):
+    def __init__(self, parent=None, margin=0, spacing=8):
+        super().__init__(parent)
+        if parent is not None:
+            self.setContentsMargins(margin, margin, margin, margin)
+        self.setSpacing(spacing)
+        self._items = []
+
+    def addItem(self, item):
+        self._items.append(item)
+
+    def count(self):
+        return len(self._items)
+
+    def itemAt(self, i):
+        return self._items[i] if 0 <= i < len(self._items) else None
+
+    def takeAt(self, i):
+        return self._items.pop(i) if 0 <= i < len(self._items) else None
+
+    def expandingDirections(self):
+        return Qt.Orientation(0)
+
+    def hasHeightForWidth(self):
+        return True
+
+    def heightForWidth(self, width):
+        return self._do_layout(QRect(0, 0, width, 0), True)
+
+    def setGeometry(self, rect):
+        super().setGeometry(rect)
+        self._do_layout(rect, False)
+
+    def sizeHint(self):
+        return self.minimumSize()
+
+    def minimumSize(self):
+        size = QSize()
+        for item in self._items:
+            size = size.expandedTo(item.minimumSize())
+        m = self.contentsMargins()
+        size += QSize(m.left() + m.right(), m.top() + m.bottom())
+        return size
+
+    def _do_layout(self, rect, test_only):
+        x = rect.x()
+        y = rect.y()
+        line_height = 0
+        spacing = self.spacing()
+        for item in self._items:
+            w = item.sizeHint().width()
+            h = item.sizeHint().height()
+            next_x = x + w + spacing
+            if next_x - spacing > rect.right() and line_height > 0:
+                x = rect.x()
+                y = y + line_height + spacing
+                next_x = x + w + spacing
+                line_height = 0
+            if not test_only:
+                item.setGeometry(QRect(QPoint(x, y), item.sizeHint()))
+            x = next_x
+            line_height = max(line_height, h)
+        return y + line_height - rect.y()
 
 # =========================
 # COLORS
@@ -236,6 +305,9 @@ class Signals(QObject):
     req_seismic_manual  = Signal(str)   # seismic website open — wait for user to save PDF
     req_location_exists = Signal(str)   # location screenshot already exists
     refresh_done        = Signal()      # background project scan finished — repopulate dropdown
+    run_finished        = Signal()      # a stage/chain run finished — re-enable UI on GUI thread
+    req_workflow_update = Signal(str)    # TOT determined mid-run — rebuild stage buttons on GUI thread
+    stage_start         = Signal(int, int)  # a stage began (idx, total) — advance pipeline fill
 
 
 signals = Signals()
@@ -1690,6 +1762,13 @@ class SAXWindow(QMainWindow):
         self._pipeline_seconds  = 0
         self._pipeline_clock    = QTimer()
         self._pipeline_clock.timeout.connect(self._tick_pipeline_clock)
+        self._stage_running     = False
+        self._pipeline_running  = False
+        self._shimmer_pos       = 0.0
+        self._shimmer_timer     = QTimer()
+        self._shimmer_timer.timeout.connect(self._tick_shimmer)
+        self._pipe_index        = 0   # current stage index within the run
+        self._pipe_total        = 0   # total stages in the current run
 
         # Connect all signals to main thread handlers
         signals.log.connect(self.append_log)
@@ -1715,6 +1794,9 @@ class SAXWindow(QMainWindow):
         signals.req_seismic_manual.connect(self.handle_seismic_manual)
         signals.req_location_exists.connect(self.handle_location_exists)
         signals.refresh_done.connect(self._after_refresh)
+        signals.run_finished.connect(self._after_run_all)
+        signals.req_workflow_update.connect(self._finish_load_silent)
+        signals.stage_start.connect(self._on_stage_start)
 
         self._build_ui()
         self._build_stage_buttons(DEFAULT_STAGES, enabled=False)
@@ -2104,10 +2186,7 @@ class SAXWindow(QMainWindow):
 
         # Stage indicator — horizontal dots above pipeline bar
         self.stage_indicator_widget = QWidget()
-        self.stage_indicator_layout = QGridLayout(self.stage_indicator_widget)
-        self.stage_indicator_layout.setContentsMargins(0, 0, 0, 0)
-        self.stage_indicator_layout.setSpacing(2)
-        self.stage_indicator_layout.setHorizontalSpacing(8)
+        self.stage_indicator_layout = FlowLayout(self.stage_indicator_widget, margin=0, spacing=14)
         self._stage_dot_labels = {}  # key -> (dot_label, txt_label)
         rl.addWidget(self.stage_indicator_widget)
         rl.addSpacing(4)
@@ -2221,6 +2300,48 @@ class SAXWindow(QMainWindow):
             f"border-radius:{radius}px;}}"
         )
 
+    def _bar_shimmer_style(self, color, radius, pos):
+        """Green fill with a light band sweeping across the FILLED length."""
+        hi   = "#B6F7CF"
+        band = 0.16
+        raw  = [(0.0, color), (pos - band, color), (pos, hi),
+                (pos + band, color), (1.0, color)]
+        raw  = [(max(0.0, min(1.0, p)), c) for p, c in raw]
+        raw.sort(key=lambda s: s[0])
+        cleaned, last = [], -1.0
+        for p, c in raw:
+            if p <= last:
+                p = min(1.0, last + 0.001)
+            cleaned.append((p, c))
+            last = p
+        grad = ", ".join(f"stop:{p:.3f} {c}" for p, c in cleaned)
+        return (
+            f"QProgressBar{{background-color:{BTN_DEFAULT};"
+            f"border-radius:{radius}px;border:none;}}"
+            f"QProgressBar::chunk{{border-radius:{radius}px;"
+            f"background-color:qlineargradient(x1:0,y1:0,x2:1,y2:0,{grad});}}"
+        )
+
+    def _start_shimmer(self):
+        self._shimmer_pos = 0.0
+        if not self._shimmer_timer.isActive():
+            self._shimmer_timer.start(70)
+
+    def _stop_shimmer(self):
+        if self._shimmer_timer.isActive():
+            self._shimmer_timer.stop()
+        # restore solid green, keeping each bar's current fill
+        self.pipeline_bar.setStyleSheet(self._bar_style(GREEN, radius=6))
+        self.stage_bar.setStyleSheet(self._bar_style(GREEN, radius=4))
+
+    def _tick_shimmer(self):
+        self._shimmer_pos += 0.035
+        if self._shimmer_pos > 1.0:
+            self._shimmer_pos = 0.0
+        p = self._shimmer_pos
+        self.pipeline_bar.setStyleSheet(self._bar_shimmer_style(GREEN, 6, p))
+        self.stage_bar.setStyleSheet(self._bar_shimmer_style(GREEN, 4, p))
+
     def _show_stages_popup(self):
         """Show floating stage list as a proper popup menu."""
         from PySide6.QtWidgets import QMenu
@@ -2279,8 +2400,7 @@ class SAXWindow(QMainWindow):
             txt.setStyleSheet(f"color:#333355;")
             dot_layout.addWidget(dot)
             dot_layout.addWidget(txt)
-            row, col = divmod(i, 3)
-            self.stage_indicator_layout.addWidget(dot_widget, row, col)
+            self.stage_indicator_layout.addWidget(dot_widget)
             self._stage_dot_labels[key] = (dot, txt)
 
     def _build_stage_dots(self, stages):
@@ -2306,8 +2426,7 @@ class SAXWindow(QMainWindow):
             txt.setStyleSheet(f"color:{SUBTEXT};")
             dot_layout.addWidget(dot)
             dot_layout.addWidget(txt)
-            row, col = divmod(i, 3)
-            self.stage_indicator_layout.addWidget(dot_widget, row, col)
+            self.stage_indicator_layout.addWidget(dot_widget)
             self._stage_dot_labels[key] = (dot, txt)
 
     def _update_stage_dot(self, key, state):
@@ -2415,21 +2534,19 @@ class SAXWindow(QMainWindow):
         self.project_input.lineEdit().setText(text.split(" — ")[0].strip())
 
     def _init_headless_state(self):
-        """Sync the toggle button to the REAL HEADLESS value in config.py."""
-        val = False
+        """Always default to background ON at every launch — force HEADLESS=True."""
         try:
-            with open(os.path.join(SHARED_DIR, "config.py"), "r", encoding="utf-8") as f:
-                for line in f:
-                    s = line.strip()
-                    if s.startswith("HEADLESS"):
-                        val = "True" in s.split("#")[0]
-                        break
+            cfg = os.path.join(SHARED_DIR, "config.py")
+            with open(cfg, "r", encoding="utf-8") as f:
+                content = f.read()
+            if "HEADLESS = False" in content:
+                content = content.replace("HEADLESS = False", "HEADLESS = True")
+                with open(cfg, "w", encoding="utf-8") as f:
+                    f.write(content)
         except Exception:
             pass
-        self.headless_btn.setChecked(val)
-        self.headless_btn.setText(
-            "🟢  Work in Background: ON" if val else "⬛  Work in Background: OFF"
-        )
+        self.headless_btn.setChecked(True)
+        self.headless_btn.setText("🟢  Work in Background: ON")
 
     def toggle_headless(self):
         checked = self.headless_btn.isChecked()
@@ -2527,7 +2644,24 @@ class SAXWindow(QMainWindow):
         self.load_btn.setEnabled(True)
         if not success:
             self.append_log("ERROR: INFO stage failed.")
+        self._prefill_completed()
         self._finish_load()
+
+    def _prefill_completed(self):
+        """Mark stages already done (from the INFO file) so they're not re-run
+        as prerequisites when you click a later stage."""
+        try:
+            info = get_info_data(self.project_root, self.project_number)
+        except Exception:
+            return
+        if not info:
+            return
+        if info.get("VERIFIED_APN", "").strip():
+            self.completed_stages.add("apn")
+        if info.get("TOT", "").strip():
+            self.completed_stages.add("tot")
+        if info.get("SEISMIC_SS", "").strip():
+            self.completed_stages.add("asce")
 
     def _finish_load(self):
         self.stop_btn.setEnabled(True)
@@ -2575,34 +2709,54 @@ class SAXWindow(QMainWindow):
         self.stage_bar.setStyleSheet(self._bar_style(GREEN, radius=4))
         self._start_clock()
 
+    # Clocks are driven by the single main-thread total-clock tick below, using
+    # flags. QTimer.start() from a worker thread is silently ignored, so the
+    # stage/pipeline timers must NOT rely on their own QTimers.
     def _start_clock(self):
         self._stage_seconds = 0
-        self.stage_timer_label.setText("00:00")
-        self.stage_timer_label.setStyleSheet(f"color:{BLUE};")
-        self._stage_clock.stop()
-        self._stage_clock.start(1000)
+        self._stage_running = True
 
     def _stop_clock(self):
-        self._stage_clock.stop()
-        self.stage_timer_label.setStyleSheet(f"color:{SUBTEXT};")
+        self._stage_running = False
+
+    def _start_pipeline_clock(self):
+        self._pipeline_seconds = 0
+        self._pipeline_running = True
+
+    def _stop_pipeline_clock(self, success=True):
+        self._pipeline_running = False
 
     def _tick_clock(self):
-        self._stage_seconds += 1
-        mins = self._stage_seconds // 60
-        secs = self._stage_seconds % 60
-        self.stage_timer_label.setText(f"{mins:02d}:{secs:02d}")
+        pass  # unused — driven by _tick_total_clock
+
+    def _tick_pipeline_clock(self):
+        pass  # unused — driven by _tick_total_clock
 
     def _tick_total_clock(self):
         self._total_seconds += 1
-        mins = self._total_seconds // 60
-        secs = self._total_seconds % 60
-        self.total_timer_label.setText(f"{mins:02d}:{secs:02d}")
+        self.total_timer_label.setText(
+            f"{self._total_seconds // 60:02d}:{self._total_seconds % 60:02d}"
+        )
+        if self._stage_running:
+            self._stage_seconds += 1
+            self.stage_timer_label.setText(
+                f"{self._stage_seconds // 60:02d}:{self._stage_seconds % 60:02d}"
+            )
+        if self._pipeline_running:
+            self._pipeline_seconds += 1
+            self.pipeline_clock_label.setText(
+                f"{self._pipeline_seconds // 60:02d}:{self._pipeline_seconds % 60:02d}"
+            )
 
-    def _tick_pipeline_clock(self):
-        self._pipeline_seconds += 1
-        mins = self._pipeline_seconds // 60
-        secs = self._pipeline_seconds % 60
-        self.pipeline_clock_label.setText(f"{mins:02d}:{secs:02d}")
+    def _on_stage_start(self, idx, total):
+        """Stage began — pipeline fill starts at the completed-stages point; the
+        stage's own step progress then fills its slice (see set_stage_progress)."""
+        if total <= 0:
+            return
+        self._pipe_index = idx
+        self._pipe_total = total
+        self.pipeline_bar.setValue(int((idx / total) * 100))
+        self.pipeline_pct_label.setText(f"STAGES {idx + 1}/{total}")
 
     def set_pipeline_progress(self, current, total):
         if total == 0:
@@ -2626,6 +2780,11 @@ class SAXWindow(QMainWindow):
             self.stage_bar.setStyleSheet(
                 self._bar_style(GREEN, radius=4)
             )
+        # Pipeline fill = (completed stages + this stage's fraction) / total stages
+        if self._pipe_total > 0:
+            frac = step / total
+            pct  = int(((self._pipe_index + frac) / self._pipe_total) * 100)
+            self.pipeline_bar.setValue(pct)
 
     def _tick_stage_bar(self):
         current = self.stage_bar.value()
@@ -2683,6 +2842,13 @@ class SAXWindow(QMainWindow):
     def on_stage_done(self, key, success):
         if success:
             self.completed_stages.add(key)
+            # Snap the stage bar to full on completion, even if the script
+            # emitted fewer sub-steps than declared (e.g. skipped upload).
+            steps = SCRIPT_STEPS.get(key, [])
+            if steps:
+                self._stage_target = 100
+                self.stage_bar.setValue(100)
+                self.stage_step_label.setText(f"STEPS {len(steps)}/{len(steps)}")
             if runner._stage_had_warning:
                 self._update_stage_dot(key, "warning")
             else:
@@ -2722,68 +2888,81 @@ class SAXWindow(QMainWindow):
     # RUN SINGLE
     # =========================
 
+    def _ordered_prereqs(self, key):
+        """Prerequisites for key in dependency order (deps first), deduped."""
+        ordered = []
+        def add(k):
+            for dep in DEPENDENCIES.get(k, []):
+                add(dep)
+                if dep not in ordered:
+                    ordered.append(dep)
+        add(key)
+        return ordered
+
     def run_single(self, key, force=False):
         if not self.project_number:
             self.append_log("ERROR: No project loaded.")
             return
         if key in COMING_SOON:
             return
+        if self.running:
+            return
 
-        # When force=True skip dependency check entirely
-        if not force:
-            ok, missing = self._check_dependencies(key)
-            if not ok:
-                missing_label = STAGE_LABELS.get(missing, missing)
-                stage_label   = STAGE_LABELS.get(key, key)
-                dlg = DependencyDialog(self, stage_label, missing_label)
-                if dlg.exec() != QDialog.Accepted:
-                    return
+        # No dependency popup. Build the chain: any prerequisites not already
+        # done (in order), then the clicked stage. Each script skips itself if
+        # already complete. Only the clicked stage honors `force`.
+        chain = [d for d in self._ordered_prereqs(key)
+                 if d not in self.completed_stages and d not in COMING_SOON]
+        chain.append(key)
+        self._run_stage_chain(chain, force_stage=key if force else None)
 
-                def run_dep_then(m=missing, k=key):
-                    dep_btn = self.stage_buttons.get(m)
-                    if dep_btn:
-                        dep_btn.set_running()
-                    signals.log.emit(
-                        f"--- Running {STAGE_LABELS.get(m, m)} first ---"
-                    )
-                    signals.reset_bars.emit()
-                    suc = runner.run(m, self.project_number)
-                    if suc:
-                        self.completed_stages.add(m)
-                        tgt = self.stage_buttons.get(k)
-                        if tgt:
-                            tgt.set_running()
-                        signals.log.emit(
-                            f"--- Now running {STAGE_LABELS.get(k, k)} ---"
-                        )
-                        signals.reset_bars.emit()
-                        runner.run(k, self.project_number)
-                    else:
-                        signals.log.emit(
-                            f"ERROR: {STAGE_LABELS.get(m, m)} failed."
-                        )
-
-                self.stop_btn.setEnabled(True)
-                btn = self.stage_buttons.get(key)
-                if btn:
-                    btn.set_running()
-                threading.Thread(
-                    target=run_dep_then, daemon=True
-                ).start()
-                return
-
-        btn = self.stage_buttons.get(key)
-        if btn:
-            btn.set_running()
-        self.append_log(
-            f"--- Running {STAGE_LABELS.get(key, key)} ---"
-        )
-        self._reset_stage_bars()
+    def _run_stage_chain(self, chain, force_stage=None):
+        self.running = True
+        self._run_failed = False
+        self.setup_calcs_btn.set_enabled(False)
+        self.upload_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
+        self.pipeline_bar.setStyleSheet(self._bar_style(BLUE, radius=6))
+        self.pipeline_bar.setValue(0)
+        self._total_clock.start(1000)
+        self._start_pipeline_clock()
+        self._start_shimmer()
+        self._reset_stage_bars()
+        if len(chain) > 1:
+            self.append_log(
+                "=== Running: "
+                + " → ".join(STAGE_LABELS.get(s, s) for s in chain)
+                + " ==="
+            )
 
         def worker():
-            self._start_pipeline_clock()
-            runner.run(key, self.project_number, force=force)
+            completed = 0
+            for idx, k in enumerate(chain):
+                if not self.running:
+                    break
+                runner._current_stage_key = k
+                runner._stage_had_warning = False
+                btn = self.stage_buttons.get(k)
+                if btn:
+                    btn.set_running()
+                signals.log.emit(f"--- Running {STAGE_LABELS.get(k, k)} ---")
+                signals.reset_bars.emit()
+                signals.stage_start.emit(idx, len(chain))
+                success = runner.run(
+                    k, self.project_number, force=(k == force_stage)
+                )
+                completed += 1
+                signals.pipeline_progress.emit(completed, len(chain))
+                if success:
+                    self.completed_stages.add(k)
+                else:
+                    signals.log.emit(
+                        f"STOPPED — {STAGE_LABELS.get(k, k)} failed."
+                    )
+                    self._run_failed = True
+                    break
+            self.running = False
+            signals.run_finished.emit()
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -2801,6 +2980,7 @@ class SAXWindow(QMainWindow):
         stages = self.active_stages
         total  = len(stages)
         self.running = True
+        self._run_failed = False
         self.setup_calcs_btn.set_enabled(False)
         self.stop_btn.setEnabled(True)
         self.pipeline_bar.setStyleSheet(self._bar_style(BLUE, radius=6))
@@ -2810,6 +2990,7 @@ class SAXWindow(QMainWindow):
         # Build stage dots
         self._build_stage_dots(stages)
         self._start_pipeline_clock()
+        self._start_shimmer()
 
         self.append_log(f"=== SETUP CALCS — {total} stages ===")
         for i, stage in enumerate(stages, 1):
@@ -2838,6 +3019,7 @@ class SAXWindow(QMainWindow):
                     f"--- Running {STAGE_LABELS.get(key, key)} ---"
                 )
                 signals.reset_bars.emit()
+                signals.stage_start.emit(completed, len(stages_list))
                 success = runner.run(key, self.project_number)
                 completed += 1
                 signals.pipeline_progress.emit(completed, len(stages_list))
@@ -2846,7 +3028,7 @@ class SAXWindow(QMainWindow):
                         f"PIPELINE STOPPED — "
                         f"{STAGE_LABELS.get(key, key)} failed."
                     )
-                    QTimer.singleShot(0, lambda: self._stop_pipeline_clock(success=False))
+                    self._run_failed = True
                     break
 
                 # After TOT completes, check TOT status and extend pipeline
@@ -2863,13 +3045,11 @@ class SAXWindow(QMainWindow):
                     for s in remaining:
                         if s not in stages_list:
                             stages_list.append(s)
-                    # Rebuild stage buttons for new workflow on main thread
-                    QTimer.singleShot(
-                        0, lambda t=tot: self._finish_load_silent(t)
-                    )
+                    # Rebuild stage buttons for new workflow on main thread (via signal)
+                    signals.req_workflow_update.emit(tot)
 
             self.running = False
-            QTimer.singleShot(0, self._after_run_all)
+            signals.run_finished.emit()
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -2888,20 +3068,13 @@ class SAXWindow(QMainWindow):
             self._build_stage_buttons(NORMAL_STAGES, enabled=False)
             self._build_stage_dots(NORMAL_STAGES)
 
-    def _start_pipeline_clock(self):
-        self._pipeline_seconds = 0
-        self.pipeline_clock_label.setText("00:00")
-        self.pipeline_clock_label.setStyleSheet(f"color:{BLUE};")
-        self._pipeline_clock.start(1000)
-
-    def _stop_pipeline_clock(self, success=True):
-        self._pipeline_clock.stop()
-        color = GREEN if success else RED
-        self.pipeline_clock_label.setStyleSheet(f"color:{color};")
-
     def _after_run_all(self):
-        self.append_log("=== PIPELINE COMPLETE ===")
-        self._stop_pipeline_clock(success=True)
+        failed = getattr(self, "_run_failed", False)
+        self._run_failed = False
+        self.append_log("=== PIPELINE STOPPED ===" if failed else "=== PIPELINE COMPLETE ===")
+        self._stop_clock()                       # freeze stage clock at its time
+        self._stop_pipeline_clock(success=not failed)  # freeze pipeline clock
+        self._stop_shimmer()                     # stop pulsing, keep the fill
         self._re_enable_ui()
 
 
