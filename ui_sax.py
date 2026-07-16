@@ -131,7 +131,7 @@ DEFAULT_STAGES = NORMAL_STAGES
 
 STAGE_LABELS = {
     "info":       "Project Info",
-    "monday":     "Upload Contract",
+    "monday":     "Upload Contract + Location",
     "apn":        "APN Verification",
     "tot":        "TOT Verification",
     "asce":       "ASCE Hazard Data",
@@ -169,7 +169,8 @@ SCRIPT_STEPS = {
                  "Extracting APN", "Extracting client info",
                  "Writing INFO file"],
     "monday":   ["Finding contract PDF", "Connecting to Monday",
-                 "Finding board", "Finding project item", "Uploading file"],
+                 "Finding board", "Finding project item", "Uploading file",
+                 "Setting location"],
     "apn":      ["Reading INFO file", "Checking APN",
                  "Verifying APN", "Updating INFO file"],
     "tot":      ["Reading INFO file", "Opening TOT website",
