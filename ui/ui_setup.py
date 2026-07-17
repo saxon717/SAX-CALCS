@@ -308,6 +308,9 @@ class Signals(QObject):
     run_finished        = Signal()      # a stage/chain run finished — re-enable UI on GUI thread
     req_workflow_update = Signal(str)    # TOT determined mid-run — rebuild stage buttons on GUI thread
     stage_start         = Signal(int, int)  # a stage began (idx, total) — advance pipeline fill
+    req_consulting      = Signal(str)    # bad-template contract — open contract + INFO to fill manually
+    req_info_diff       = Signal(str)    # re-extraction found changes — confirm or cancel
+    req_apn_verify      = Signal(str)    # APN lookup result — confirm/pick the correct APN
 
 
 signals = Signals()
@@ -1122,6 +1125,131 @@ class ASCEExistsDialog(SAXDialog):
         self.main_layout.addLayout(row)
 
 
+class ConsultingDialog(SAXDialog):
+    def __init__(self, parent, contract_path, info_path):
+        super().__init__(parent, "Consulting Contract")
+        self.main_layout.addWidget(
+            self._title_label("Consulting Contract — Fill Out Info Manually")
+        )
+        self.main_layout.addWidget(self._body_label(
+            "This contract's format couldn't be auto-read. Click below to open the "
+            "contract and the INFO file, fill in the details, and save. After that, "
+            "everything runs normally."
+        ))
+        row = QHBoxLayout()
+        row.setSpacing(10)
+        row.addStretch()
+        btn = QPushButton("Open Contract + INFO File")
+        btn.setStyleSheet(DIALOG_BTN_BLUE)
+        btn.setDefault(True)
+
+        def _open():
+            for p in (contract_path, info_path):
+                try:
+                    if p:
+                        os.startfile(p)
+                except Exception:
+                    pass
+            self.accept()
+
+        btn.clicked.connect(_open)
+        row.addWidget(btn)
+        self.main_layout.addLayout(row)
+
+
+COUNTY_GIS = {
+    "NEVADA": "https://experience.arcgis.com/experience/45d30af79b1e45f792844b897a45131a",
+    "PLACER": "https://experience.arcgis.com/experience/a29d510f9e9d4a98ac2158fca49aecbc",
+}
+
+
+class APNVerifyDialog(SAXDialog):
+    def __init__(self, parent, status, contract_apn, apn_addr,
+                 proj_addr, addr_apn, jur, contract_pdf, county):
+        super().__init__(parent, "Verify APN")
+        titles = {
+            "MISMATCH":  "APN and address don't match — pick the correct APN.",
+            "APN_ONLY":  "Found the APN — confirm it.",
+            "ADDR_ONLY": "Found the address — confirm the APN.",
+            "NOT_FOUND": "Not found in county records — verify manually.",
+        }
+        self.main_layout.addWidget(self._title_label(titles.get(status, "Verify the APN.")))
+        self.main_layout.addWidget(self._info_box(
+            "CONTRACT APN", f"{contract_apn or '(none)'}\ncounty address: {apn_addr or '(not found)'}"))
+        apn_label = f"{(county or '').upper()} COUNTY APN" if county else "COUNTY APN"
+        self.main_layout.addWidget(self._info_box(
+            "PROJECT ADDRESS", f"{proj_addr or '(none)'}\n{apn_label}: {addr_apn or '(not found)'}"))
+        if jur:
+            self.main_layout.addWidget(self._info_box("JURISDICTION", jur))
+
+        self.main_layout.addWidget(self._body_label("Confirm the correct APN:"))
+        self.apn_widget = APNWidget()
+        default = (contract_apn or addr_apn or "").strip()
+        parts = default.split("-")
+        if len(parts) >= 3:
+            self.apn_widget.set_apn("-".join(parts[:3]))
+        self.main_layout.addWidget(self.apn_widget)
+
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        if contract_pdf:
+            b = QPushButton("OPEN CONTRACT")
+            b.setStyleSheet(DIALOG_BTN_GRAY)
+            b.clicked.connect(lambda: self._open(contract_pdf))
+            row.addWidget(b)
+        url = COUNTY_GIS.get((county or "").upper())
+        if url:
+            lk = QPushButton("LOOK UP APN")
+            lk.setStyleSheet(DIALOG_BTN_GRAY)
+            lk.clicked.connect(lambda: self._open(url))
+            row.addWidget(lk)
+        row.addStretch()
+        cancel = QPushButton("CANCEL")
+        cancel.setStyleSheet(DIALOG_BTN_GRAY)
+        cancel.clicked.connect(lambda: self.done(2))
+        confirm = QPushButton("CONFIRM APN")
+        confirm.setStyleSheet(DIALOG_BTN_BLUE)
+        confirm.setDefault(True)
+        confirm.clicked.connect(self.accept)
+        row.addWidget(cancel)
+        row.addWidget(confirm)
+        self.main_layout.addLayout(row)
+
+    def _open(self, target):
+        try:
+            os.startfile(target)
+        except Exception:
+            pass
+
+    def value(self):
+        v = self.apn_widget.get_apn().strip()
+        return "" if v in ("", "--", "- -") else v
+
+
+class InfoDiffDialog(SAXDialog):
+    def __init__(self, parent, changes):
+        super().__init__(parent, "Confirm Info Changes")
+        self.main_layout.addWidget(self._title_label("Re-extraction found changes."))
+        for field, old, new in changes:
+            self.main_layout.addWidget(
+                self._info_box(field, f"was:  {old or '(blank)'}\nnew:  {new}")
+            )
+        self.main_layout.addWidget(self._body_label("Apply these changes to the INFO file?"))
+        row = QHBoxLayout()
+        row.setSpacing(10)
+        row.addStretch()
+        cancel = QPushButton("CANCEL — KEEP EXISTING")
+        cancel.setStyleSheet(DIALOG_BTN_GRAY)
+        cancel.clicked.connect(lambda: self.done(2))
+        confirm = QPushButton("CONFIRM CHANGES")
+        confirm.setStyleSheet(DIALOG_BTN_GREEN)
+        confirm.setDefault(True)
+        confirm.clicked.connect(self.accept)
+        row.addWidget(cancel)
+        row.addWidget(confirm)
+        self.main_layout.addLayout(row)
+
+
 # =========================
 # TOT MANUAL DIALOG
 # =========================
@@ -1315,7 +1443,7 @@ class SplitButton(QWidget):
     run_clicked   = Signal()
     arrow_clicked = Signal()
 
-    def __init__(self, label, parent=None):
+    def __init__(self, label, parent=None, badge_text="", badge_color=""):
         super().__init__(parent)
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -1345,6 +1473,22 @@ class SplitButton(QWidget):
         self.arrow_btn.setFixedWidth(36)
         self.run_btn.setStyleSheet(run_style)
         self.arrow_btn.setStyleSheet(arrow_style)
+        if badge_text:
+            self.run_btn.setText("")
+            bl = QHBoxLayout(self.run_btn)
+            bl.setContentsMargins(16, 0, 16, 0)
+            bl.setSpacing(9)
+            badge = QLabel(badge_text)
+            badge.setStyleSheet(
+                f"color:{badge_color};background:transparent;"
+                f"font-family:Arial;font-size:15px;font-weight:bold;")
+            txt = QLabel(label)
+            txt.setStyleSheet(
+                "color:white;background:transparent;"
+                "font-family:Arial;font-size:13px;font-weight:bold;")
+            bl.addWidget(badge)
+            bl.addWidget(txt)
+            bl.addStretch()
         self.run_btn.clicked.connect(self.run_clicked)
         self.arrow_btn.clicked.connect(self._toggle_arrow)
         layout.addWidget(self.run_btn, 1)
@@ -1471,13 +1615,15 @@ class ScriptRunner(QObject):
             cmd = [sys.executable, "-u", path, project_number]
             if force:
                 cmd.append("--force")
+            env = {**os.environ, "SAX_UI": "1"}   # enables INFO change-confirm prompts
             self._proc = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 stdin=subprocess.PIPE,
                 text=True,
-                bufsize=1
+                bufsize=1,
+                env=env,
             )
         except Exception as e:
             signals.log.emit(f"ERROR launching script: {e}")
@@ -1627,6 +1773,27 @@ class ScriptRunner(QObject):
                 self._proc.stdin.flush()
                 continue
 
+            # ── APN VERIFY — confirm/pick APN from county lookup ──
+            if line.startswith("UI_APN_VERIFY:"):
+                signals.req_apn_verify.emit(line.replace("UI_APN_VERIFY:", "").strip())
+                result = self._wait_for_result(key, timeout=600)
+                if result is None:
+                    return False
+                self._proc.stdin.write(result + "\n")
+                self._proc.stdin.flush()
+                continue
+
+            # ── INFO DIFF — confirm re-extraction changes ──
+            if line.startswith("UI_INFO_DIFF:"):
+                payload = line.replace("UI_INFO_DIFF:", "").strip()
+                signals.req_info_diff.emit(payload)
+                result = self._wait_for_result(key, timeout=300)
+                if result is None:
+                    return False
+                self._proc.stdin.write(result + "\n")
+                self._proc.stdin.flush()
+                continue
+
             # ── WARNING LOG — show in yellow in status log ──
             # ── XL FILE SELECT — update existing or create new ──
             if line.startswith("UI_XL_SELECT:"):
@@ -1699,6 +1866,11 @@ class ScriptRunner(QObject):
                 self._proc.stdin.flush()
                 continue
 
+            # ── CONSULTING CONTRACT (bad template — manual fill) ──
+            if line.startswith("UI_CONSULTING:"):
+                signals.req_consulting.emit(line.replace("UI_CONSULTING:", "").strip())
+                continue
+
             # ── XL FILE PATH (collect, show popup after stage done) ──
             if line.startswith("UI_XL_PATH:"):
                 path = line.replace("UI_XL_PATH:", "").strip()
@@ -1739,7 +1911,7 @@ class SAXWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("SAX — Calcs Pipeline")
+        self.setWindowTitle("SAX — Setup Pipeline")
         self.setMinimumSize(920, 680)
         screen = QApplication.primaryScreen().availableGeometry()
         self.resize(1200, 720)
@@ -1809,6 +1981,9 @@ class SAXWindow(QMainWindow):
         signals.run_finished.connect(self._after_run_all)
         signals.req_workflow_update.connect(self._finish_load_silent)
         signals.stage_start.connect(self._on_stage_start)
+        signals.req_consulting.connect(self.handle_consulting)
+        signals.req_info_diff.connect(self.handle_info_diff)
+        signals.req_apn_verify.connect(self.handle_apn_verify)
 
         self._build_ui()
         self._build_stage_buttons(DEFAULT_STAGES, enabled=False)
@@ -1952,6 +2127,35 @@ class SAXWindow(QMainWindow):
         self._stop_pipeline_clock(success=True)
         self.append_log("=== PIPELINE COMPLETE ===")
 
+    def handle_consulting(self, payload):
+        parts    = payload.split("|")
+        contract = parts[0] if parts else ""
+        info     = parts[1] if len(parts) > 1 else ""
+        self._exec_dialog(ConsultingDialog(self, contract, info))
+
+    def handle_apn_verify(self, payload):
+        parts = payload.split("||")
+        while len(parts) < 8:
+            parts.append("")
+        status, capn, apn_addr, paddr, addr_apn, jur, cpdf, county = parts[:8]
+        dlg = APNVerifyDialog(self, status, capn, apn_addr, paddr, addr_apn, jur, cpdf, county)
+        result = self._exec_dialog(dlg)
+        if result == QDialog.Accepted and dlg.value():
+            runner.put_result(dlg.value())
+        else:
+            runner.put_result("CANCELLED")
+
+    def handle_info_diff(self, payload):
+        changes = []
+        for part in payload.split(";;"):
+            if not part.strip():
+                continue
+            bits = part.split("||")
+            if len(bits) >= 3:
+                changes.append((bits[0], bits[1], bits[2]))
+        result = self._exec_dialog(InfoDiffDialog(self, changes))
+        runner.put_result("CONFIRM" if result == QDialog.Accepted else "CANCEL")
+
     def handle_upload_confirm(self, contract_path):
         """File already on Monday — ask whether to re-upload."""
         dlg    = UploadConfirmDialog(self, contract_path, contract_path)
@@ -2079,7 +2283,7 @@ class SAXWindow(QMainWindow):
         self.open_project_btn.clicked.connect(self.open_project_folder)
         open_row.addWidget(self.open_project_btn)
 
-        self.open_contract_btn = QPushButton("📝  OPEN CONTRACT")
+        self.open_contract_btn = QPushButton("📋  OPEN CONTRACT")
         self.open_contract_btn.setMinimumHeight(32)
         self.open_contract_btn.setStyleSheet(open_btn_style)
         self.open_contract_btn.setEnabled(False)
@@ -2088,66 +2292,89 @@ class SAXWindow(QMainWindow):
 
         ll.addLayout(open_row)
 
-        self.upload_btn = QPushButton("▶▶  UPLOAD CONTRACT")
-        self.upload_btn.setMinimumHeight(34)
-        self.upload_btn.setStyleSheet(
+        # Small stand-alone action buttons (compact, icon-led, 2-column)
+        small_action_style = (
             f"QPushButton{{background-color:{BTN_DEFAULT};color:{TEXT};"
-            f"border:1px solid {BORDER};border-radius:8px;padding:11px 16px;"
-            f"font-family:Arial;font-size:13px;font-weight:bold;text-align:left;}}"
-            f"QPushButton:hover{{background-color:{BTN_HOVER};"
-            f"border-color:{BLUE};}}"
-            f"QPushButton:disabled{{background-color:#2A2A3E;"
-            f"color:{SUBTEXT};border-color:#333355;}}"
-        )
-        self.upload_btn.setEnabled(False)
-        self.upload_btn.clicked.connect(
-            lambda: self.run_single("monday")
-        )
-        ll.addWidget(self.upload_btn)
-
-        self.apn_btn = QPushButton("▶▶  APN VERIFICATION")
-        self.apn_btn.setMinimumHeight(34)
-        self.apn_btn.setStyleSheet(
-            f"QPushButton{{background-color:{BTN_DEFAULT};color:{TEXT};"
-            f"border:1px solid {BORDER};border-radius:8px;padding:11px 16px;"
-            f"font-family:Arial;font-size:13px;font-weight:bold;text-align:left;}}"
+            f"border:1px solid {BORDER};border-radius:6px;padding:6px 8px;"
+            f"font-family:Arial;font-size:10px;font-weight:bold;text-align:left;}}"
             f"QPushButton:hover{{background-color:{BTN_HOVER};border-color:{BLUE};}}"
             f"QPushButton:disabled{{background-color:#2A2A3E;"
             f"color:{SUBTEXT};border-color:#333355;}}"
         )
+
+        self.extract_btn = QPushButton("📝  EXTRACT CONTRACT")
+        self.extract_btn.setMinimumHeight(32)
+        self.extract_btn.setStyleSheet(small_action_style)
+        self.extract_btn.setEnabled(False)
+        self.extract_btn.clicked.connect(lambda: self.run_single("info", force=True))
+
+        self.upload_btn = QPushButton("⬆️  UPLOAD CONTRACT")
+        self.upload_btn.setMinimumHeight(32)
+        self.upload_btn.setStyleSheet(small_action_style)
+        self.upload_btn.setEnabled(False)
+        self.upload_btn.clicked.connect(lambda: self.run_single("monday"))
+
+        self.apn_btn = QPushButton("📍  APN VERIFICATION")
+        self.apn_btn.setMinimumHeight(32)
+        self.apn_btn.setStyleSheet(small_action_style)
         self.apn_btn.setEnabled(False)
         self.apn_btn.clicked.connect(lambda: self.run_single("apn", force=True))
-        ll.addWidget(self.apn_btn)
 
-        self.tot_btn = QPushButton("▶▶  TOT VERIFICATION")
-        self.tot_btn.setMinimumHeight(34)
-        self.tot_btn.setStyleSheet(
-            f"QPushButton{{background-color:{BTN_DEFAULT};color:{TEXT};"
-            f"border:1px solid {BORDER};border-radius:8px;padding:11px 16px;"
-            f"font-family:Arial;font-size:13px;font-weight:bold;text-align:left;}}"
-            f"QPushButton:hover{{background-color:{BTN_HOVER};border-color:{BLUE};}}"
-            f"QPushButton:disabled{{background-color:#2A2A3E;"
-            f"color:{SUBTEXT};border-color:#333355;}}"
-        )
+        self.tot_btn = QPushButton("❄️  TOT VERIFICATION")
+        self.tot_btn.setMinimumHeight(32)
+        self.tot_btn.setStyleSheet(small_action_style)
         self.tot_btn.setEnabled(False)
         self.tot_btn.clicked.connect(lambda: self.run_single("tot", force=True))
-        ll.addWidget(self.tot_btn)
 
-        self.setup_calcs_btn = SplitButton("SETUP CALCS")
-        self.setup_calcs_btn.set_enabled(False)
-        self.setup_calcs_btn.run_clicked.connect(self.run_all)
-        self.setup_calcs_btn.arrow_clicked.connect(
-            self._show_stages_popup
+        action_row1 = QHBoxLayout()
+        action_row1.setSpacing(4)
+        action_row1.addWidget(self.extract_btn)
+        action_row1.addWidget(self.upload_btn)
+        ll.addLayout(action_row1)
+
+        action_row2 = QHBoxLayout()
+        action_row2.setSpacing(4)
+        action_row2.addWidget(self.apn_btn)
+        action_row2.addWidget(self.tot_btn)
+        ll.addLayout(action_row2)
+
+        # Big pipeline buttons — plain (not split), light-blue, same size
+        big_style = (
+            f"QPushButton{{background-color:{BLUE};color:white;border:none;"
+            f"border-radius:8px;padding:11px 16px;font-family:Arial;"
+            f"font-size:13px;font-weight:bold;text-align:left;}}"
+            f"QPushButton:hover{{background-color:#5AA0E9;}}"
+            f"QPushButton:disabled{{background-color:#3A6EA5;}}"
         )
+
+        def _big_button(label, badge_text, badge_color):
+            btn = QPushButton("")
+            btn.setMinimumHeight(38)
+            btn.setStyleSheet(big_style)
+            bl = QHBoxLayout(btn)
+            bl.setContentsMargins(16, 0, 16, 0)
+            bl.setSpacing(9)
+            badge = QLabel(badge_text)
+            badge.setAttribute(Qt.WA_TransparentForMouseEvents)
+            badge.setStyleSheet(
+                f"color:{badge_color};background:transparent;"
+                f"font-family:Arial;font-size:15px;font-weight:bold;")
+            txt = QLabel(label)
+            txt.setAttribute(Qt.WA_TransparentForMouseEvents)
+            txt.setStyleSheet(
+                "color:white;background:transparent;"
+                "font-family:Arial;font-size:13px;font-weight:bold;")
+            bl.addWidget(badge)
+            bl.addWidget(txt)
+            bl.addStretch()
+            return btn
+
+        self.setup_calcs_btn = _big_button("SETUP CALCS", "XL", GREEN)
+        self.setup_calcs_btn.setEnabled(False)
+        self.setup_calcs_btn.clicked.connect(self.run_all)
         ll.addWidget(self.setup_calcs_btn)
 
-        self.setup_revit_btn = QPushButton("▶▶  SETUP REVIT")
-        self.setup_revit_btn.setMinimumHeight(34)
-        self.setup_revit_btn.setStyleSheet(
-            f"QPushButton{{background-color:{PANEL};color:#555577;"
-            f"border:1px solid #333355;border-radius:8px;padding:11px 16px;"
-            f"font-family:Arial;font-size:13px;font-weight:bold;text-align:left;}}"
-        )
+        self.setup_revit_btn = _big_button("SETUP REVIT", "R", "#FFFFFF")
         self.setup_revit_btn.setEnabled(False)
         ll.addWidget(self.setup_revit_btn)
 
@@ -2500,12 +2727,13 @@ class SAXWindow(QMainWindow):
         self.load_btn.setEnabled(True)
         if not self.running:
             self._stop_clock()
-            self.setup_calcs_btn.set_enabled(True)
+            self.setup_calcs_btn.setEnabled(True)
             self.upload_btn.setEnabled(True)
             self.open_project_btn.setEnabled(True)
             self.open_contract_btn.setEnabled(True)
             self.apn_btn.setEnabled(True)
             self.tot_btn.setEnabled(True)
+            self.extract_btn.setEnabled(True)
             self.clean_locks_btn.setEnabled(True)
             for btn in self.stage_buttons.values():
                 if btn.key not in COMING_SOON:
@@ -2671,7 +2899,7 @@ class SAXWindow(QMainWindow):
         self.append_log(f"Project loaded: {project_name}")
         self.append_log("--- Running 01 — Project Info ---")
         self.load_btn.setEnabled(False)
-        self.setup_calcs_btn.set_enabled(False)
+        self.setup_calcs_btn.setEnabled(False)
         self.upload_btn.setEnabled(False)
         self.open_project_btn.setEnabled(False)
         self.open_contract_btn.setEnabled(False)
@@ -2740,12 +2968,13 @@ class SAXWindow(QMainWindow):
             # Show all TOT stages greyed — will update live when TOT confirmed
             self._build_stage_dots_greyed()
         self._reset_stage_bars()
-        self.setup_calcs_btn.set_enabled(True)
+        self.setup_calcs_btn.setEnabled(True)
         self.upload_btn.setEnabled(True)
         self.open_project_btn.setEnabled(True)
         self.open_contract_btn.setEnabled(True)
         self.apn_btn.setEnabled(True)
         self.tot_btn.setEnabled(True)
+        self.extract_btn.setEnabled(True)
 
     # =========================
     # PROGRESS & CLOCK
@@ -2973,8 +3202,9 @@ class SAXWindow(QMainWindow):
     def _set_ui_locked(self, locked):
         """Lock everything except Stop (and the window X) while a popup is open."""
         names = ("load_btn", "setup_calcs_btn", "upload_btn", "apn_btn", "tot_btn",
-                 "open_project_btn", "open_contract_btn", "clean_locks_btn",
-                 "refresh_btn", "headless_btn", "project_input", "clear_btn")
+                 "extract_btn", "open_project_btn", "open_contract_btn",
+                 "clean_locks_btn", "refresh_btn", "headless_btn",
+                 "project_input", "clear_btn")
         widgets = [getattr(self, n, None) for n in names]
         widgets += list(self.stage_buttons.values())
         if locked:
@@ -3076,7 +3306,7 @@ class SAXWindow(QMainWindow):
     def _run_stage_chain(self, chain, force_stage=None):
         self.running = True
         self._run_failed = False
-        self.setup_calcs_btn.set_enabled(False)
+        self.setup_calcs_btn.setEnabled(False)
         self.upload_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
         self.pipeline_bar.setStyleSheet(self._bar_style(BLUE, radius=6))
@@ -3138,7 +3368,7 @@ class SAXWindow(QMainWindow):
         total  = len(stages)
         self.running = True
         self._run_failed = False
-        self.setup_calcs_btn.set_enabled(False)
+        self.setup_calcs_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
         self.pipeline_bar.setStyleSheet(self._bar_style(BLUE, radius=6))
         self.pipeline_bar.setValue(0)
