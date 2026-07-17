@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
     QTextEdit, QProgressBar, QDialog, QFrame,
     QComboBox, QCompleter, QLayout, QSizePolicy,
 )
-from PySide6.QtCore import Qt, Signal, QObject, QTimer, QRect, QSize, QPoint
+from PySide6.QtCore import Qt, Signal, QObject, QTimer, QRect, QSize, QPoint, QEventLoop, QEvent
 from PySide6.QtGui import QFont, QIntValidator
 
 
@@ -541,6 +541,16 @@ class SAXDialog(QDialog):
             x = pr.x() + (pr.width() - self.width()) // 2
             y = pr.y() + (pr.height() - self.height()) // 2
             self.move(x, y)
+
+    def closeEvent(self, event):
+        # Clicking the window "X" cancels the whole pipeline, like Stop.
+        w = self.parent()
+        try:
+            if w is not None and getattr(w, "running", False):
+                w.stop_pipeline()
+        except Exception:
+            pass
+        super().closeEvent(event)
 
     def _title_label(self, text):
         lbl = QLabel(text)
@@ -1756,6 +1766,8 @@ class SAXWindow(QMainWindow):
         self._stage_anim      = QTimer()
         self._stage_anim.timeout.connect(self._tick_stage_bar)
         self._total_seconds   = 0
+        self._project_times   = {}   # project_number -> elapsed seconds (this session)
+        self._open_dialogs    = []   # popups currently shown (so Stop can close them)
         self._total_clock     = QTimer()
         self._total_clock.timeout.connect(self._tick_total_clock)
         self._total_clock.start(1000)
@@ -1809,7 +1821,7 @@ class SAXWindow(QMainWindow):
 
     def handle_open_pdf(self, pdf_path, pdf_name):
         dlg = OpenPDFDialog(self, pdf_name)
-        if dlg.exec() == QDialog.Accepted:
+        if self._exec_dialog(dlg) == QDialog.Accepted:
             try:
                 os.startfile(pdf_path)
             except Exception:
@@ -1822,7 +1834,7 @@ class SAXWindow(QMainWindow):
         except Exception:
             pass
         dlg = ManualAddressDialog(self)
-        if dlg.exec() == QDialog.Accepted:
+        if self._exec_dialog(dlg) == QDialog.Accepted:
             runner.put_result(dlg.result_address)
         else:
             runner.put_result("")
@@ -1833,14 +1845,14 @@ class SAXWindow(QMainWindow):
         contract_pdf = parts[1] if len(parts) > 1 else ""
         padded       = parts[2] == "PADDED" if len(parts) > 2 else False
         dlg = APNDialog(self, current_apn, contract_pdf, padded=padded)
-        if dlg.exec() == QDialog.Accepted:
+        if self._exec_dialog(dlg) == QDialog.Accepted:
             runner.put_result(dlg.result_apn)
         else:
             runner.put_result("CANCELLED")
 
     def handle_confirm_tot(self, tot_status):
         dlg = TOTConfirmDialog(self, tot_status)
-        result = dlg.exec()
+        result = self._exec_dialog(dlg)
         if result == QDialog.Accepted:
             runner.put_result("CONFIRMED")
         elif result == 2:
@@ -1850,12 +1862,12 @@ class SAXWindow(QMainWindow):
 
     def handle_location_exists(self, path):
         dlg    = LocationExistsDialog(self, path)
-        result = dlg.exec()
+        result = self._exec_dialog(dlg)
         runner.put_result("SKIP" if result == 2 else "RERUN")
 
     def handle_seismic_manual(self, pdf_path):
         dlg    = SeismicManualDialog(self, pdf_path)
-        result = dlg.exec()
+        result = self._exec_dialog(dlg)
         runner.put_result("SKIP" if result == 2 else "DONE")
 
     def handle_seismic_exists(self, payload):
@@ -1868,31 +1880,31 @@ class SAXWindow(QMainWindow):
 
     def handle_asce_exists(self, filename):
         dlg    = ASCEExistsDialog(self, filename)
-        result = dlg.exec()
+        result = self._exec_dialog(dlg)
         runner.put_result("SKIP" if result == 2 else "RERUN")
 
     def handle_tot_manual(self, message):
         dlg = TOTManualDialog(self, message)
         runner.put_result(
-            "Y" if dlg.exec() == QDialog.Accepted else "N"
+            "Y" if self._exec_dialog(dlg) == QDialog.Accepted else "N"
         )
 
     def handle_addr_mismatch(self, info_addr, found_addr):
         dlg = AddressMismatchDialog(self, info_addr, found_addr)
         runner.put_result(
-            "Y" if dlg.exec() == QDialog.Accepted else "N"
+            "Y" if self._exec_dialog(dlg) == QDialog.Accepted else "N"
         )
 
     def handle_monday_mismatch(self, monday_name, local_name):
         dlg = MondayMismatchDialog(self, monday_name, local_name)
         runner.put_result(
-            "Y" if dlg.exec() == QDialog.Accepted else "N"
+            "Y" if self._exec_dialog(dlg) == QDialog.Accepted else "N"
         )
 
     def handle_info_exists(self, files_str):
         files  = files_str.split("|")
         dlg    = InfoExistsDialog(self, files)
-        result = dlg.exec()
+        result = self._exec_dialog(dlg)
         if result == 3:
             runner.put_result("SKIP")
         elif result == 2:
@@ -1910,7 +1922,7 @@ class SAXWindow(QMainWindow):
             runner.put_result("NEW")
             return
         dlg = XLSelectDialog(self, files, file_type)
-        result = dlg.exec()
+        result = self._exec_dialog(dlg)
         if result == 2 and dlg.selected_file:
             runner.put_result(f"UPDATE:{dlg.selected_file}")
         else:
@@ -1923,7 +1935,7 @@ class SAXWindow(QMainWindow):
         except:
             _headless = False
         dlg    = XLCompleteDialog(self, paths, headless=_headless)
-        result = dlg.exec()
+        result = self._exec_dialog(dlg)
         if result == QDialog.Accepted:
             self.append_log(
                 f"Opening: {', '.join(os.path.basename(p) for p in dlg.keep_open)}"
@@ -1943,7 +1955,7 @@ class SAXWindow(QMainWindow):
     def handle_upload_confirm(self, contract_path):
         """File already on Monday — ask whether to re-upload."""
         dlg    = UploadConfirmDialog(self, contract_path, contract_path)
-        result = dlg.exec()
+        result = self._exec_dialog(dlg)
         if result == 2:
             runner.put_result("SKIP")
         else:
@@ -1992,22 +2004,37 @@ class SAXWindow(QMainWindow):
             f"border:1px solid {BORDER};border-radius:6px;"
             f"padding:6px 10px;font-family:Arial;font-size:13px;}}"
             f"QComboBox:focus{{border-color:{BLUE};}}"
-            f"QComboBox::drop-down{{border:none;width:24px;}}"
-            f"QComboBox::down-arrow{{width:10px;height:10px;}}"
+            f"QComboBox::drop-down{{border:none;width:26px;}}"
+            f"QComboBox::down-arrow{{image:none;width:0px;height:0px;}}"
             f"QComboBox QAbstractItemView{{"
             f"background:{PANEL};color:{TEXT};border:1px solid {BORDER};"
             f"font-family:Arial;font-size:12px;padding:4px;"
             f"selection-background-color:{BLUE};selection-color:white;}}"
         )
-        self.project_input.setMaxVisibleItems(30)
+        self.project_input.setMaxVisibleItems(8)
         self.project_input.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
-        completer = self.project_input.completer()
+        completer = QCompleter(self.project_input.model(), self.project_input)
+        completer.setCompletionMode(QCompleter.PopupCompletion)
         completer.setFilterMode(Qt.MatchContains)
         completer.setCaseSensitivity(Qt.CaseInsensitive)
-        completer.setCompletionMode(QCompleter.PopupCompletion)
+        completer.setMaxVisibleItems(8)
+        completer.popup().setStyleSheet(
+            f"background:{PANEL};color:{TEXT};border:1px solid {BORDER};"
+            f"font-family:Arial;font-size:12px;padding:2px;"
+            f"selection-background-color:{BLUE};selection-color:white;"
+        )
+        self.project_input.setCompleter(completer)
         self.project_input.lineEdit().returnPressed.connect(self.load_project)
         self.project_input.activated.connect(self._on_project_selected)
         ll.addWidget(self.project_input)
+
+        # ▼ arrow overlay (reliable across styles) + edit-the-number-on-focus
+        self._combo_arrow = QLabel("▼", self.project_input)
+        self._combo_arrow.setStyleSheet(f"color:{SUBTEXT};background:transparent;font-size:9px;")
+        self._combo_arrow.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self.project_input.installEventFilter(self)
+        self.project_input.lineEdit().installEventFilter(self)
+        QTimer.singleShot(0, self._position_combo_arrow)
 
         self.project_name_label = QLabel("")
         self.project_name_label.setFont(QFont("Arial", 9))
@@ -2250,6 +2277,12 @@ class SAXWindow(QMainWindow):
         self._slabel(rl, "STATUS LOG")
         self.log_display = QTextEdit()
         self.log_display.setReadOnly(True)
+        # Always auto-scroll to the newest line
+        self.log_display.textChanged.connect(
+            lambda: self.log_display.verticalScrollBar().setValue(
+                self.log_display.verticalScrollBar().maximum()
+            )
+        )
         self.log_display.setStyleSheet(
             f"QTextEdit{{background-color:{BG};color:{TEXT};"
             f"border:1px solid {BORDER};border-radius:8px;"
@@ -2267,7 +2300,8 @@ class SAXWindow(QMainWindow):
             f"border-radius:4px;padding:5px 10px;font-size:11px;}}"
             f"QPushButton:hover{{color:{TEXT};}}"
         )
-        clear_btn.clicked.connect(self.log_display.clear)
+        clear_btn.clicked.connect(self._clear_log)
+        self.clear_btn = clear_btn
         self.stop_btn = QPushButton("■  Stop")
         self.stop_btn.setFixedWidth(90)
         self.stop_btn.setStyleSheet(
@@ -2529,9 +2563,8 @@ class SAXWindow(QMainWindow):
         self.append_log("Project list updated — Done.")
 
     def _on_project_selected(self, index):
-        """User picked a project from the dropdown."""
-        text = self.project_input.itemText(index)
-        self.project_input.lineEdit().setText(text.split(" — ")[0].strip())
+        """User picked a project — keep the full text; it collapses on Enter/Load."""
+        self.project_input.lineEdit().setText(self.project_input.itemText(index))
 
     def _init_headless_state(self):
         """Always default to background ON at every launch — force HEADLESS=True."""
@@ -2606,15 +2639,31 @@ class SAXWindow(QMainWindow):
             self.append_log(f"ERROR: No project found for {pn}")
             return
 
+        # Save the current project's elapsed time before switching away
+        if self.project_number:
+            self._project_times[self.project_number] = self._total_seconds
+
         self.project_number   = pn
         self.project_root     = project_root
         self.project_name     = project_name
         self.completed_stages = set()
+        # Collapse the input to just the project number after any load.
+        # Deferred so it runs AFTER the completer inserts its full text.
+        def _collapse_input(p=pn):
+            le = self.project_input.lineEdit()
+            self.project_input.blockSignals(True)
+            le.setText(p)
+            le.setCursorPosition(len(p))
+            self.project_input.blockSignals(False)
+        _collapse_input()
+        QTimer.singleShot(0, _collapse_input)
         self.project_name_label.setText(project_name)
         self.project_name_label.setStyleSheet(f"color:{GREEN};")
-        # Reset total clock for new project
-        self._total_seconds = 0
-        self.total_timer_label.setText("00:00")
+        # Restore this project's saved time (0 if first time this session)
+        self._total_seconds = self._project_times.get(pn, 0)
+        self.total_timer_label.setText(
+            f"{self._total_seconds // 60:02d}:{self._total_seconds % 60:02d}"
+        )
         self.total_time_label.setText(f"TOTAL TIME — Project #: {self.project_number} {self.project_name}")
         self._pipeline_seconds = 0
         self.pipeline_clock_label.setText("00:00")
@@ -2660,8 +2709,8 @@ class SAXWindow(QMainWindow):
             self.completed_stages.add("apn")
         if info.get("TOT", "").strip():
             self.completed_stages.add("tot")
-        if info.get("SEISMIC_SS", "").strip():
-            self.completed_stages.add("asce")
+        # NOTE: asce/lat/vert are NOT prefilled — they run so their
+        # "already exists" popups can ask to reuse or recreate.
 
     def _finish_load(self):
         self.stop_btn.setEnabled(True)
@@ -2798,9 +2847,50 @@ class SAXWindow(QMainWindow):
     # LOGGING
     # =========================
 
+    def _clear_log(self):
+        self.log_display.clear()
+        # stop run visuals
+        self._stop_shimmer()
+        self._stage_running    = False
+        self._pipeline_running = False
+        self._stage_seconds    = 0
+        self._pipeline_seconds = 0
+        # NOTE: total clock is NOT reset here — only on window close / project change
+        self.stage_timer_label.setText("00:00")
+        self.pipeline_clock_label.setText("00:00")
+        self.stage_bar.setValue(0)
+        self.pipeline_bar.setValue(0)
+        self.pipeline_pct_label.setText("—")
+        self.stage_step_label.setText("—")
+        self.current_stage_name_label.setText("")
+        # reset the verification checkboxes to idle
+        for dot, txt in self._stage_dot_labels.values():
+            dot.setText("⬜")
+            dot.setStyleSheet(f"color:{SUBTEXT};")
+            txt.setStyleSheet(f"color:{SUBTEXT};")
+
+    LOG_SUPPRESS = (
+        "Running TOT in background", "Running in background",
+        "NEXT BUTTON CLICKED", "POPUP LOADED", "POPUP DATA",
+        "PRESSED ENTER", "TYPED:", "SATELLITE MAP OPENED",
+        "SUGGESTION FOUND", "TOT REMINDER", "USING VERIFIED APN",
+        "SEARCHING UI FOLDER", "MATCHING INFO FILES", "GOOD DESCRIPTION",
+        "ScrollRow", "ScrollColumn",
+    )
+
     def append_log(self, message):
         if not message.strip():
             return
+        # Hide low-value debug lines
+        if any(s in message for s in self.LOG_SUPPRESS):
+            return
+        # Strip absolute paths anywhere in the line — show just the file/folder name.
+        import re as _re
+        m = _re.search(r'[A-Za-z]:[\\/][^\r\n]*', message)
+        if m:
+            p = m.group(0).rstrip()
+            name = p.replace("/", "\\").rstrip("\\").split("\\")[-1]
+            message = message[:m.start()] + name
         # Pipeline header lines — large bright green
         if message.startswith("===") or message.startswith("--- Running"):
             self.log_display.append(
@@ -2867,10 +2957,77 @@ class SAXWindow(QMainWindow):
     # STOP
     # =========================
 
+    def _position_combo_arrow(self):
+        cw = self.project_input.width()
+        ch = self.project_input.height()
+        self._combo_arrow.adjustSize()
+        self._combo_arrow.move(cw - self._combo_arrow.width() - 10,
+                               (ch - self._combo_arrow.height()) // 2)
+        self._combo_arrow.show()
+
+    def eventFilter(self, obj, event):
+        if obj is self.project_input and event.type() == QEvent.Resize:
+            self._position_combo_arrow()
+        return super().eventFilter(obj, event)
+
+    def _set_ui_locked(self, locked):
+        """Lock everything except Stop (and the window X) while a popup is open."""
+        names = ("load_btn", "setup_calcs_btn", "upload_btn", "apn_btn", "tot_btn",
+                 "open_project_btn", "open_contract_btn", "clean_locks_btn",
+                 "refresh_btn", "headless_btn", "project_input", "clear_btn")
+        widgets = [getattr(self, n, None) for n in names]
+        widgets += list(self.stage_buttons.values())
+        if locked:
+            self._pre_lock_states = {}
+            for w in widgets:
+                if w is not None:
+                    self._pre_lock_states[w] = w.isEnabled()
+                    w.setEnabled(False)
+        else:
+            for w, st in getattr(self, "_pre_lock_states", {}).items():
+                try:
+                    w.setEnabled(st)
+                except Exception:
+                    pass
+            self._pre_lock_states = {}
+
+    def _exec_dialog(self, dlg):
+        """Show a popup WITHOUT app-modality so Stop and the window X stay clickable.
+        Blocks the caller (like exec) via a local event loop and returns the result."""
+        dlg.setModal(False)
+        self._set_ui_locked(True)
+        loop = QEventLoop()
+        dlg.finished.connect(loop.quit)
+        self._open_dialogs.append(dlg)
+        dlg.show()
+        dlg.raise_()
+        dlg.activateWindow()
+        loop.exec()
+        if dlg in self._open_dialogs:
+            self._open_dialogs.remove(dlg)
+        self._set_ui_locked(False)
+        return dlg.result()
+
+    def _close_open_dialogs(self):
+        for d in list(self._open_dialogs):
+            try:
+                d.reject()
+            except Exception:
+                pass
+        self._open_dialogs = []
+
     def stop_pipeline(self):
+        self._close_open_dialogs()
         runner.stop()
         self.running = False
+        self._run_failed = True
+        self._stop_clock()
         self._stop_pipeline_clock(success=False)
+        self._stop_shimmer()
+        try:
+            runner.put_result("STOP")   # unblock any waiting popup handler
+        except Exception:
+            pass
         self.append_log("=== PIPELINE STOPPED BY USER ===")
         QTimer.singleShot(200, self._re_enable_ui)
 
@@ -3067,6 +3224,9 @@ class SAXWindow(QMainWindow):
             self.active_stages = list(NORMAL_STAGES)
             self._build_stage_buttons(NORMAL_STAGES, enabled=False)
             self._build_stage_dots(NORMAL_STAGES)
+        # Re-apply green checks for stages already completed (rebuild wiped them)
+        for k in self.completed_stages:
+            self._update_stage_dot(k, "done")
 
     def _after_run_all(self):
         failed = getattr(self, "_run_failed", False)
