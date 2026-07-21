@@ -1459,7 +1459,7 @@ class SplitButton(QWidget):
         )
         arrow_style = (
             f"QPushButton{{background-color:{BLUE};color:white;"
-            f"border:none;border-left:1px solid #6FB0F0;"
+            f"border:none;"
             f"border-top-left-radius:0px;border-bottom-left-radius:0px;"
             f"border-top-right-radius:8px;border-bottom-right-radius:8px;"
             f"padding:11px 8px;font-family:Arial;font-size:12px;"
