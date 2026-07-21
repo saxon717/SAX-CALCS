@@ -1447,7 +1447,7 @@ class SplitButton(QWidget):
         super().__init__(parent)
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(1)
+        layout.setSpacing(0)
         run_style = (
             f"QPushButton{{background-color:{BLUE};color:white;border:none;"
             f"border-top-left-radius:8px;border-bottom-left-radius:8px;"
@@ -1458,29 +1458,29 @@ class SplitButton(QWidget):
             f"QPushButton:disabled{{background-color:#2A2A3E;color:{SUBTEXT};}}"
         )
         arrow_style = (
-            f"QPushButton{{background-color:#3A80C9;color:white;border:none;"
+            f"QPushButton{{background-color:{BLUE};color:white;"
+            f"border:none;border-left:1px solid #6FB0F0;"
             f"border-top-left-radius:0px;border-bottom-left-radius:0px;"
             f"border-top-right-radius:8px;border-bottom-right-radius:8px;"
-            f"padding:11px 10px;font-family:Arial;font-size:13px;"
-            f"font-weight:bold;min-width:32px;max-width:32px;}}"
+            f"padding:11px 8px;font-family:Arial;font-size:12px;"
+            f"font-weight:bold;min-width:30px;max-width:30px;}}"
             f"QPushButton:hover{{background-color:#5AA0E9;}}"
-            f"QPushButton:disabled{{background-color:#252535;color:{SUBTEXT};}}"
+            f"QPushButton:disabled{{background-color:#2A2A3E;color:{SUBTEXT};}}"
         )
         self.run_btn   = QPushButton(f"▶▶  {label}")
         self.arrow_btn = QPushButton("▼")
-        self.run_btn.setMinimumHeight(34)
-        self.arrow_btn.setMinimumHeight(34)
-        self.arrow_btn.setFixedWidth(36)
+        self.run_btn.setMinimumHeight(38)
+        self.arrow_btn.setMinimumHeight(38)
+        self.arrow_btn.setFixedWidth(32)
         self.run_btn.setStyleSheet(run_style)
         self.arrow_btn.setStyleSheet(arrow_style)
         if badge_text:
             self.run_btn.setText("")
             bl = QHBoxLayout(self.run_btn)
-            bl.setContentsMargins(12, 0, 12, 0)
+            bl.setContentsMargins(14, 0, 0, 0)
             bl.setSpacing(0)
-            bl.addStretch()
             lbl = QLabel(
-                f'<span style="color:{badge_color};font-size:17px;font-weight:bold;">{badge_text}</span>'
+                f'<span style="color:{badge_color};font-size:18px;font-weight:bold;">{badge_text}</span>'
                 f'&nbsp;&nbsp;&nbsp;'
                 f'<span style="color:white;font-size:13px;font-weight:bold;">{label}&nbsp;&nbsp;▶▶</span>')
             lbl.setTextFormat(Qt.RichText)
@@ -2177,7 +2177,7 @@ class SAXWindow(QMainWindow):
 
         # LEFT PANEL
         left = QWidget()
-        left.setFixedWidth(345)
+        left.setFixedWidth(400)
         left.setStyleSheet(
             f"background-color:{PANEL};border-right:1px solid {BORDER};"
         )
@@ -2285,7 +2285,7 @@ class SAXWindow(QMainWindow):
         # ── 6 action buttons in a 2-column grid (equal size, aligned) ──
         small_action_style = (
             f"QPushButton{{background-color:{BTN_DEFAULT};color:#FFFFFF;"
-            f"border:1px solid {BORDER};border-radius:6px;padding:7px 8px;"
+            f"border:1px solid {BORDER};border-radius:6px;padding:7px 6px;"
             f"font-family:Arial;font-size:11px;font-weight:bold;text-align:left;}}"
             f"QPushButton:hover{{background-color:{BTN_HOVER};border-color:{BLUE};}}"
             f"QPushButton:disabled{{background-color:#2A2A3E;"
@@ -2337,15 +2337,14 @@ class SAXWindow(QMainWindow):
             f"QPushButton:disabled{{background-color:#3A6EA5;}}"
         )
         self.setup_revit_btn = QPushButton("")
-        self.setup_revit_btn.setMinimumHeight(34)
+        self.setup_revit_btn.setMinimumHeight(38)
         self.setup_revit_btn.setStyleSheet(revit_style)
         self.setup_revit_btn.setEnabled(False)
         _rl = QHBoxLayout(self.setup_revit_btn)
-        _rl.setContentsMargins(12, 0, 12, 0)
+        _rl.setContentsMargins(14, 0, 0, 0)
         _rl.setSpacing(0)
-        _rl.addStretch()
         _r_lbl = QLabel(
-            '<span style="color:#FFFFFF;font-size:17px;font-weight:bold;">R</span>'
+            '<span style="color:#FFFFFF;font-size:18px;font-weight:bold;">R</span>'
             '&nbsp;&nbsp;&nbsp;'
             '<span style="color:white;font-size:13px;font-weight:bold;">SETUP REVIT&nbsp;&nbsp;▶▶</span>')
         _r_lbl.setTextFormat(Qt.RichText)
@@ -2622,11 +2621,13 @@ class SAXWindow(QMainWindow):
             )
             menu.addAction(action)
 
-        # Show below the Setup Calcs button
-        btn_pos  = self.setup_calcs_btn.mapToGlobal(
-            self.setup_calcs_btn.rect().bottomLeft()
+        # Drop down from the RIGHT edge of the Setup Calcs button
+        from PySide6.QtCore import QPoint
+        menu_w  = menu.sizeHint().width()
+        corner  = self.setup_calcs_btn.mapToGlobal(
+            self.setup_calcs_btn.rect().bottomRight()
         )
-        menu.exec(btn_pos)
+        menu.exec(QPoint(corner.x() - menu_w, corner.y()))
 
     def _toggle_calcs_stages(self):
         pass  # kept for compatibility
