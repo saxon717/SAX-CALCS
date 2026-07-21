@@ -1476,18 +1476,17 @@ class SplitButton(QWidget):
         if badge_text:
             self.run_btn.setText("")
             bl = QHBoxLayout(self.run_btn)
-            bl.setContentsMargins(16, 0, 16, 0)
-            bl.setSpacing(9)
-            badge = QLabel(badge_text)
-            badge.setStyleSheet(
-                f"color:{badge_color};background:transparent;"
-                f"font-family:Arial;font-size:15px;font-weight:bold;")
-            txt = QLabel(label)
-            txt.setStyleSheet(
-                "color:white;background:transparent;"
-                "font-family:Arial;font-size:13px;font-weight:bold;")
-            bl.addWidget(badge)
-            bl.addWidget(txt)
+            bl.setContentsMargins(12, 0, 12, 0)
+            bl.setSpacing(0)
+            bl.addStretch()
+            lbl = QLabel(
+                f'<span style="color:{badge_color};font-size:17px;font-weight:bold;">{badge_text}</span>'
+                f'&nbsp;&nbsp;&nbsp;'
+                f'<span style="color:white;font-size:13px;font-weight:bold;">{label}&nbsp;&nbsp;▶▶</span>')
+            lbl.setTextFormat(Qt.RichText)
+            lbl.setAttribute(Qt.WA_TransparentForMouseEvents)
+            lbl.setStyleSheet("background:transparent;font-family:Arial;")
+            bl.addWidget(lbl)
             bl.addStretch()
         self.run_btn.clicked.connect(self.run_clicked)
         self.arrow_btn.clicked.connect(self._toggle_arrow)
@@ -2178,7 +2177,7 @@ class SAXWindow(QMainWindow):
 
         # LEFT PANEL
         left = QWidget()
-        left.setFixedWidth(300)
+        left.setFixedWidth(345)
         left.setStyleSheet(
             f"background-color:{PANEL};border-right:1px solid {BORDER};"
         )
@@ -2186,19 +2185,38 @@ class SAXWindow(QMainWindow):
         ll.setContentsMargins(16, 20, 16, 16)
         ll.setSpacing(8)
 
+        header_row = QHBoxLayout()
+        header_row.setSpacing(8)
         title = QLabel("SAX")
         title.setFont(QFont("Arial", 22, QFont.Bold))
         title.setStyleSheet(f"color:{BLUE};")
-        ll.addWidget(title)
-
+        header_row.addWidget(title)
         subtitle = QLabel("Structural Automation Xtension")
         subtitle.setFont(QFont("Arial", 9))
         subtitle.setStyleSheet(f"color:{SUBTEXT};")
-        subtitle.setWordWrap(True)
-        ll.addWidget(subtitle)
+        header_row.addWidget(subtitle, 0, Qt.AlignBottom)
+        header_row.addStretch()
+        ll.addLayout(header_row)
         ll.addSpacing(14)
 
-        self._slabel(ll, "PROJECT")
+        # PROJECT: label + REFRESH on the same row
+        proj_hdr = QHBoxLayout()
+        proj_hdr.setSpacing(8)
+        _plbl = QLabel("PROJECT:")
+        _plbl.setFont(QFont("Arial", 8, QFont.Bold))
+        _plbl.setStyleSheet(f"color:{SUBTEXT};letter-spacing:1px;")
+        proj_hdr.addWidget(_plbl)
+        proj_hdr.addStretch()
+        self.refresh_btn = QPushButton("⟳  REFRESH")
+        self.refresh_btn.setStyleSheet(
+            f"QPushButton{{background-color:{BTN_DEFAULT};color:{SUBTEXT};"
+            f"border:1px solid #333355;border-radius:6px;padding:3px 12px;"
+            f"font-family:Arial;font-size:10px;}}"
+            f"QPushButton:hover{{color:{TEXT};border-color:{BORDER};}}"
+        )
+        self.refresh_btn.clicked.connect(self.refresh_projects)
+        proj_hdr.addWidget(self.refresh_btn)
+        ll.addLayout(proj_hdr)
         self.project_input = QComboBox()
         self.project_input.setEditable(True)
         self.project_input.setInsertPolicy(QComboBox.NoInsert)
@@ -2264,157 +2282,80 @@ class SAXWindow(QMainWindow):
         self.load_btn.clicked.connect(self.load_project)
         ll.addWidget(self.load_btn)
 
-        open_row = QHBoxLayout()
-        open_row.setSpacing(4)
-
-        open_btn_style = (
-            f"QPushButton{{background-color:{BTN_DEFAULT};color:{TEXT};"
-            f"border:1px solid {BORDER};border-radius:6px;padding:6px 8px;"
-            f"font-family:Arial;font-size:11px;text-align:left;}}"
-            f"QPushButton:hover{{background-color:{BTN_HOVER};border-color:{BLUE};}}"
-            f"QPushButton:disabled{{background-color:#2A2A3E;"
-            f"color:{SUBTEXT};border-color:#333355;}}"
-        )
-
-        self.open_project_btn = QPushButton("📁  OPEN PROJECT")
-        self.open_project_btn.setMinimumHeight(32)
-        self.open_project_btn.setStyleSheet(open_btn_style)
-        self.open_project_btn.setEnabled(False)
-        self.open_project_btn.clicked.connect(self.open_project_folder)
-        open_row.addWidget(self.open_project_btn)
-
-        self.open_contract_btn = QPushButton("📋  OPEN CONTRACT")
-        self.open_contract_btn.setMinimumHeight(32)
-        self.open_contract_btn.setStyleSheet(open_btn_style)
-        self.open_contract_btn.setEnabled(False)
-        self.open_contract_btn.clicked.connect(self.open_contract_pdf)
-        open_row.addWidget(self.open_contract_btn)
-
-        ll.addLayout(open_row)
-
-        # Small stand-alone action buttons (compact, icon-led, 2-column)
+        # ── 6 action buttons in a 2-column grid (equal size, aligned) ──
         small_action_style = (
-            f"QPushButton{{background-color:{BTN_DEFAULT};color:{TEXT};"
-            f"border:1px solid {BORDER};border-radius:6px;padding:6px 8px;"
-            f"font-family:Arial;font-size:10px;font-weight:bold;text-align:left;}}"
+            f"QPushButton{{background-color:{BTN_DEFAULT};color:#FFFFFF;"
+            f"border:1px solid {BORDER};border-radius:6px;padding:7px 8px;"
+            f"font-family:Arial;font-size:11px;font-weight:bold;text-align:left;}}"
             f"QPushButton:hover{{background-color:{BTN_HOVER};border-color:{BLUE};}}"
             f"QPushButton:disabled{{background-color:#2A2A3E;"
             f"color:{SUBTEXT};border-color:#333355;}}"
         )
 
-        self.extract_btn = QPushButton("📝  EXTRACT CONTRACT")
-        self.extract_btn.setMinimumHeight(32)
-        self.extract_btn.setStyleSheet(small_action_style)
-        self.extract_btn.setEnabled(False)
-        self.extract_btn.clicked.connect(lambda: self.run_single("info", force=True))
+        def _grid_btn(text, handler):
+            b = QPushButton(text)
+            b.setMinimumHeight(34)
+            b.setStyleSheet(small_action_style)
+            b.setEnabled(False)
+            b.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            b.clicked.connect(handler)
+            return b
 
-        self.upload_btn = QPushButton("⬆️  UPLOAD CONTRACT")
-        self.upload_btn.setMinimumHeight(32)
-        self.upload_btn.setStyleSheet(small_action_style)
-        self.upload_btn.setEnabled(False)
-        self.upload_btn.clicked.connect(lambda: self.run_single("monday"))
+        self.open_project_btn  = _grid_btn("📁  OPEN PROJECT",     self.open_project_folder)
+        self.open_contract_btn = _grid_btn("📋  OPEN CONTRACT",    self.open_contract_pdf)
+        self.apn_btn           = _grid_btn("📍  APN + TOT VERIFICATION", lambda: self.run_single("apn", force=True))
+        self.upload_btn        = _grid_btn("⬆️  UPLOAD CONTRACT",  lambda: self.run_single("monday"))
+        self.tot_btn           = _grid_btn("❄️  TOT VERIFICATION", lambda: self.run_single("tot", force=True))
+        self.extract_btn       = _grid_btn("✂️  EXTRACT CONTRACT", lambda: self.run_single("info", force=True))
 
-        self.apn_btn = QPushButton("📍  APN VERIFICATION")
-        self.apn_btn.setMinimumHeight(32)
-        self.apn_btn.setStyleSheet(small_action_style)
-        self.apn_btn.setEnabled(False)
-        self.apn_btn.clicked.connect(lambda: self.run_single("apn", force=True))
+        btn_grid = QGridLayout()
+        btn_grid.setHorizontalSpacing(4)
+        btn_grid.setVerticalSpacing(6)
+        btn_grid.setColumnStretch(0, 1)
+        btn_grid.setColumnStretch(1, 1)
+        btn_grid.addWidget(self.open_project_btn, 0, 0)
+        btn_grid.addWidget(self.open_contract_btn, 0, 1)
+        btn_grid.addWidget(self.apn_btn,           1, 0)
+        btn_grid.addWidget(self.upload_btn,        1, 1)
+        btn_grid.addWidget(self.tot_btn,           2, 0)
+        btn_grid.addWidget(self.extract_btn,       2, 1)
+        ll.addLayout(btn_grid)
+        ll.addSpacing(4)
 
-        self.tot_btn = QPushButton("❄️  TOT VERIFICATION")
-        self.tot_btn.setMinimumHeight(32)
-        self.tot_btn.setStyleSheet(small_action_style)
-        self.tot_btn.setEnabled(False)
-        self.tot_btn.clicked.connect(lambda: self.run_single("tot", force=True))
+        # ── Big pipeline buttons: logo left, text, ▶▶ after, centered ──
+        self.setup_calcs_btn = SplitButton("SETUP CALCS", badge_text="XL", badge_color=GREEN)
+        self.setup_calcs_btn.set_enabled(False)
+        self.setup_calcs_btn.run_clicked.connect(self.run_all)
+        self.setup_calcs_btn.arrow_clicked.connect(self._show_stages_popup)
+        ll.addWidget(self.setup_calcs_btn)
 
-        action_row1 = QHBoxLayout()
-        action_row1.setSpacing(4)
-        action_row1.addWidget(self.extract_btn)
-        action_row1.addWidget(self.upload_btn)
-        ll.addLayout(action_row1)
-
-        action_row2 = QHBoxLayout()
-        action_row2.setSpacing(4)
-        action_row2.addWidget(self.apn_btn)
-        action_row2.addWidget(self.tot_btn)
-        ll.addLayout(action_row2)
-
-        # Big pipeline buttons — plain (not split), light-blue, same size
-        big_style = (
+        revit_style = (
             f"QPushButton{{background-color:{BLUE};color:white;border:none;"
             f"border-radius:8px;padding:11px 16px;font-family:Arial;"
-            f"font-size:13px;font-weight:bold;text-align:left;}}"
+            f"font-size:13px;font-weight:bold;}}"
             f"QPushButton:hover{{background-color:#5AA0E9;}}"
             f"QPushButton:disabled{{background-color:#3A6EA5;}}"
         )
-
-        def _big_button(label, badge_text, badge_color):
-            btn = QPushButton("")
-            btn.setMinimumHeight(38)
-            btn.setStyleSheet(big_style)
-            bl = QHBoxLayout(btn)
-            bl.setContentsMargins(16, 0, 16, 0)
-            bl.setSpacing(9)
-            badge = QLabel(badge_text)
-            badge.setAttribute(Qt.WA_TransparentForMouseEvents)
-            badge.setStyleSheet(
-                f"color:{badge_color};background:transparent;"
-                f"font-family:Arial;font-size:15px;font-weight:bold;")
-            txt = QLabel(label)
-            txt.setAttribute(Qt.WA_TransparentForMouseEvents)
-            txt.setStyleSheet(
-                "color:white;background:transparent;"
-                "font-family:Arial;font-size:13px;font-weight:bold;")
-            bl.addWidget(badge)
-            bl.addWidget(txt)
-            bl.addStretch()
-            return btn
-
-        self.setup_calcs_btn = _big_button("SETUP CALCS", "XL", GREEN)
-        self.setup_calcs_btn.setEnabled(False)
-        self.setup_calcs_btn.clicked.connect(self.run_all)
-        ll.addWidget(self.setup_calcs_btn)
-
-        self.setup_revit_btn = _big_button("SETUP REVIT", "R", "#FFFFFF")
+        self.setup_revit_btn = QPushButton("")
+        self.setup_revit_btn.setMinimumHeight(34)
+        self.setup_revit_btn.setStyleSheet(revit_style)
         self.setup_revit_btn.setEnabled(False)
+        _rl = QHBoxLayout(self.setup_revit_btn)
+        _rl.setContentsMargins(12, 0, 12, 0)
+        _rl.setSpacing(0)
+        _rl.addStretch()
+        _r_lbl = QLabel(
+            '<span style="color:#FFFFFF;font-size:17px;font-weight:bold;">R</span>'
+            '&nbsp;&nbsp;&nbsp;'
+            '<span style="color:white;font-size:13px;font-weight:bold;">SETUP REVIT&nbsp;&nbsp;▶▶</span>')
+        _r_lbl.setTextFormat(Qt.RichText)
+        _r_lbl.setAttribute(Qt.WA_TransparentForMouseEvents)
+        _r_lbl.setStyleSheet("background:transparent;font-family:Arial;")
+        _rl.addWidget(_r_lbl)
+        _rl.addStretch()
         ll.addWidget(self.setup_revit_btn)
 
         ll.addStretch()
-
-        self.refresh_btn = QPushButton("⟳  Refresh Projects")
-        self.refresh_btn.setStyleSheet(
-            f"QPushButton{{background-color:{BTN_DEFAULT};color:{SUBTEXT};"
-            f"border:1px solid #333355;border-radius:6px;padding:6px;"
-            f"font-family:Arial;font-size:11px;}}"
-            f"QPushButton:hover{{color:{TEXT};border-color:{BORDER};}}"
-        )
-        self.refresh_btn.clicked.connect(self.refresh_projects)
-        ll.addWidget(self.refresh_btn)
-
-        self.clean_locks_btn = QPushButton("🔓  Clean Excel Locks")
-        self.clean_locks_btn.setStyleSheet(
-            f"QPushButton{{background-color:{BTN_DEFAULT};color:{SUBTEXT};"
-            f"border:1px solid #333355;border-radius:6px;padding:6px;"
-            f"font-family:Arial;font-size:11px;}}"
-            f"QPushButton:hover{{color:{YELLOW};border-color:{YELLOW};}}"
-        )
-        self.clean_locks_btn.setEnabled(False)
-        self.clean_locks_btn.clicked.connect(self.clean_excel_locks)
-        ll.addWidget(self.clean_locks_btn)
-
-        self.headless_btn = QPushButton("🟢  Work in Background: ON")
-        self.headless_btn.setCheckable(True)
-        self.headless_btn.setChecked(True)
-        self.headless_btn.setStyleSheet(
-            f"QPushButton{{background-color:{BTN_DEFAULT};"
-            f"color:{SUBTEXT};border:1px solid #333355;"
-            f"border-radius:6px;padding:6px;"
-            f"font-family:Arial;font-size:11px;}}"
-            f"QPushButton:checked{{background-color:#1A3A2A;"
-            f"color:{GREEN};border-color:{GREEN};}}"
-            f"QPushButton:hover{{color:{TEXT};border-color:{BORDER};}}"
-        )
-        self.headless_btn.clicked.connect(self.toggle_headless)
-        ll.addWidget(self.headless_btn)
 
         root.addWidget(left)
 
@@ -2519,8 +2460,33 @@ class SAXWindow(QMainWindow):
 
         btn_row = QHBoxLayout()
         btn_row.setSpacing(8)
-        clear_btn = QPushButton("Clear Log")
-        clear_btn.setFixedWidth(90)
+
+        # Work in Background toggle — far left of the status bar
+        self.headless_btn = QPushButton("🟢  Work in Background: ON")
+        self.headless_btn.setCheckable(True)
+        self.headless_btn.setChecked(True)
+        self.headless_btn.setStyleSheet(
+            f"QPushButton{{background-color:{BTN_DEFAULT};color:{SUBTEXT};"
+            f"border:1px solid #333355;border-radius:4px;"
+            f"padding:5px 12px;font-size:11px;}}"
+            f"QPushButton:checked{{background-color:#1A3A2A;"
+            f"color:{GREEN};border-color:{GREEN};}}"
+            f"QPushButton:hover{{color:{TEXT};border-color:{BORDER};}}"
+        )
+        self.headless_btn.clicked.connect(self.toggle_headless)
+
+        self.clean_locks_btn = QPushButton("🔓  XL LOCKS")
+        self.clean_locks_btn.setStyleSheet(
+            f"QPushButton{{background-color:{BTN_DEFAULT};color:{SUBTEXT};"
+            f"border:1px solid {BORDER};border-radius:4px;"
+            f"padding:5px 10px;font-size:11px;}}"
+            f"QPushButton:hover{{color:{YELLOW};border-color:{YELLOW};}}"
+            f"QPushButton:disabled{{color:#553355;border-color:#333355;}}"
+        )
+        self.clean_locks_btn.setEnabled(False)
+        self.clean_locks_btn.clicked.connect(self.clean_excel_locks)
+
+        clear_btn = QPushButton("🧹  CLEAR LOG")
         clear_btn.setStyleSheet(
             f"QPushButton{{background-color:{BTN_DEFAULT};"
             f"color:{SUBTEXT};border:1px solid {BORDER};"
@@ -2529,19 +2495,22 @@ class SAXWindow(QMainWindow):
         )
         clear_btn.clicked.connect(self._clear_log)
         self.clear_btn = clear_btn
-        self.stop_btn = QPushButton("■  Stop")
-        self.stop_btn.setFixedWidth(90)
+
+        self.stop_btn = QPushButton("■  STOP")
         self.stop_btn.setStyleSheet(
             f"QPushButton{{background-color:#3A1111;color:{RED};"
             f"border:1px solid {RED};border-radius:4px;"
-            f"padding:5px 10px;font-size:11px;font-weight:bold;}}"
+            f"padding:5px 14px;font-size:11px;font-weight:bold;}}"
             f"QPushButton:hover{{background-color:#4A1A1A;}}"
             f"QPushButton:disabled{{background-color:{PANEL};"
             f"color:#553333;border-color:#443333;}}"
         )
         self.stop_btn.setEnabled(True)
         self.stop_btn.clicked.connect(self.stop_pipeline)
+
+        btn_row.addWidget(self.headless_btn)
         btn_row.addStretch()
+        btn_row.addWidget(self.clean_locks_btn)
         btn_row.addWidget(clear_btn)
         btn_row.addWidget(self.stop_btn)
         rl.addLayout(btn_row)
@@ -2618,10 +2587,35 @@ class SAXWindow(QMainWindow):
             f"QMenu::separator{{height:1px;background:{BORDER};margin:2px 8px;}}"
         )
 
-        for key in self.active_stages:
-            label  = STAGE_LABELS.get(key, key)
+        # Explicit dropdown labels per workflow (label, stage-key or None)
+        dropdown_tot = [
+            ("APN + TOT VERIFICATION", "apn"),
+            ("SNOW LOAD", "tot"),
+            ("LOCATION", "tot_location"),
+            ("SEISMIC REPORT", "tot_seismic"),
+            ("LAT XL", "tot_lat"),
+            ("VERT XL", "tot_vert"),
+        ]
+        dropdown_normal = [
+            ("APN + TOT VERIFICATION", "apn"),
+            ("ASCE HAZARD", "asce"),
+            ("LAT XL", "lat"),
+            ("VERT XL", "vert"),
+        ]
+        if "tot_lat" in self.active_stages:
+            items = dropdown_tot
+        elif "asce" in self.active_stages:
+            items = dropdown_normal
+        else:
+            items = [("APN", "apn"), ("TOT", "tot")]
+
+        for label, key in items:
+            if key is None:
+                action = QAction(f"{label}  (coming soon)", self)
+                action.setEnabled(False)
+                menu.addAction(action)
+                continue
             action = QAction(label, self)
-            btn    = self.stage_buttons.get(key)
             action.setEnabled(True)
             action.triggered.connect(
                 lambda checked=False, k=key: self.run_single(k)
@@ -2727,7 +2721,7 @@ class SAXWindow(QMainWindow):
         self.load_btn.setEnabled(True)
         if not self.running:
             self._stop_clock()
-            self.setup_calcs_btn.setEnabled(True)
+            self.setup_calcs_btn.set_enabled(True)
             self.upload_btn.setEnabled(True)
             self.open_project_btn.setEnabled(True)
             self.open_contract_btn.setEnabled(True)
@@ -2787,7 +2781,7 @@ class SAXWindow(QMainWindow):
         self.project_input.update()
         self.project_input.repaint()
         self.refresh_btn.setEnabled(True)
-        self.refresh_btn.setText("⟳  Refresh Projects")
+        self.refresh_btn.setText("⟳  REFRESH")
         self.append_log("Project list updated — Done.")
 
     def _on_project_selected(self, index):
@@ -2899,7 +2893,7 @@ class SAXWindow(QMainWindow):
         self.append_log(f"Project loaded: {project_name}")
         self.append_log("--- Running 01 — Project Info ---")
         self.load_btn.setEnabled(False)
-        self.setup_calcs_btn.setEnabled(False)
+        self.setup_calcs_btn.set_enabled(False)
         self.upload_btn.setEnabled(False)
         self.open_project_btn.setEnabled(False)
         self.open_contract_btn.setEnabled(False)
@@ -2968,7 +2962,7 @@ class SAXWindow(QMainWindow):
             # Show all TOT stages greyed — will update live when TOT confirmed
             self._build_stage_dots_greyed()
         self._reset_stage_bars()
-        self.setup_calcs_btn.setEnabled(True)
+        self.setup_calcs_btn.set_enabled(True)
         self.upload_btn.setEnabled(True)
         self.open_project_btn.setEnabled(True)
         self.open_contract_btn.setEnabled(True)
@@ -3306,7 +3300,7 @@ class SAXWindow(QMainWindow):
     def _run_stage_chain(self, chain, force_stage=None):
         self.running = True
         self._run_failed = False
-        self.setup_calcs_btn.setEnabled(False)
+        self.setup_calcs_btn.set_enabled(False)
         self.upload_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
         self.pipeline_bar.setStyleSheet(self._bar_style(BLUE, radius=6))
@@ -3368,7 +3362,7 @@ class SAXWindow(QMainWindow):
         total  = len(stages)
         self.running = True
         self._run_failed = False
-        self.setup_calcs_btn.setEnabled(False)
+        self.setup_calcs_btn.set_enabled(False)
         self.stop_btn.setEnabled(True)
         self.pipeline_bar.setStyleSheet(self._bar_style(BLUE, radius=6))
         self.pipeline_bar.setValue(0)
