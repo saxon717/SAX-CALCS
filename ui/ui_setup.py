@@ -1439,69 +1439,59 @@ class XLCompleteDialog(SAXDialog):
 # SPLIT BUTTON
 # =========================
 
-class SplitButton(QWidget):
+class SplitButton(QPushButton):
+    """Single seamless button. Clicking the far-right ▼ zone opens the
+    dropdown; clicking anywhere else runs. No internal seam/line."""
     run_clicked   = Signal()
     arrow_clicked = Signal()
+    ARROW_ZONE    = 42   # px from the right edge that triggers the dropdown
 
     def __init__(self, label, parent=None, badge_text="", badge_color=""):
-        super().__init__(parent)
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-        run_style = (
+        super().__init__("", parent)
+        self.setMinimumHeight(38)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setStyleSheet(
             f"QPushButton{{background-color:{BLUE};color:white;border:none;"
-            f"border-top-left-radius:8px;border-bottom-left-radius:8px;"
-            f"border-top-right-radius:0px;border-bottom-right-radius:0px;"
-            f"padding:11px 16px;font-family:Arial;font-size:13px;"
-            f"font-weight:bold;text-align:left;}}"
+            f"border-radius:8px;font-family:Arial;font-size:13px;"
+            f"font-weight:bold;}}"
             f"QPushButton:hover{{background-color:#5AA0E9;}}"
-            f"QPushButton:disabled{{background-color:#2A2A3E;color:{SUBTEXT};}}"
+            f"QPushButton:disabled{{background-color:#3A6EA5;color:{SUBTEXT};}}"
         )
-        arrow_style = (
-            f"QPushButton{{background-color:{BLUE};color:white;"
-            f"border:none;"
-            f"border-top-left-radius:0px;border-bottom-left-radius:0px;"
-            f"border-top-right-radius:8px;border-bottom-right-radius:8px;"
-            f"padding:11px 8px;font-family:Arial;font-size:12px;"
-            f"font-weight:bold;min-width:30px;max-width:30px;}}"
-            f"QPushButton:hover{{background-color:#5AA0E9;}}"
-            f"QPushButton:disabled{{background-color:#2A2A3E;color:{SUBTEXT};}}"
-        )
-        self.run_btn   = QPushButton(f"▶▶  {label}")
-        self.arrow_btn = QPushButton("▼")
-        self.run_btn.setMinimumHeight(38)
-        self.arrow_btn.setMinimumHeight(38)
-        self.arrow_btn.setFixedWidth(32)
-        self.run_btn.setStyleSheet(run_style)
-        self.arrow_btn.setStyleSheet(arrow_style)
-        if badge_text:
-            self.run_btn.setText("")
-            bl = QHBoxLayout(self.run_btn)
-            bl.setContentsMargins(14, 0, 0, 0)
-            bl.setSpacing(0)
-            lbl = QLabel(
-                f'<span style="color:{badge_color};font-size:18px;font-weight:bold;">{badge_text}</span>'
-                f'&nbsp;&nbsp;&nbsp;'
-                f'<span style="color:white;font-size:13px;font-weight:bold;">{label}&nbsp;&nbsp;▶▶</span>')
-            lbl.setTextFormat(Qt.RichText)
-            lbl.setAttribute(Qt.WA_TransparentForMouseEvents)
-            lbl.setStyleSheet("background:transparent;font-family:Arial;")
-            bl.addWidget(lbl)
-            bl.addStretch()
-        self.run_btn.clicked.connect(self.run_clicked)
-        self.arrow_btn.clicked.connect(self._toggle_arrow)
-        layout.addWidget(self.run_btn, 1)
-        layout.addWidget(self.arrow_btn)
-        self._expanded = False
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(14, 0, 0, 0)
+        lay.setSpacing(0)
+        badge = f'<span style="color:{badge_color};font-size:18px;font-weight:bold;">{badge_text}</span>&nbsp;&nbsp;' if badge_text else ""
+        # Plain span label — NO html table (tables draw their own border line)
+        lbl = QLabel(
+            f'{badge}'
+            f'<span style="color:white;font-size:13px;font-weight:bold;">{label}&nbsp;&nbsp;▶▶</span>')
+        lbl.setTextFormat(Qt.RichText)
+        lbl.setAttribute(Qt.WA_TransparentForMouseEvents)
+        lbl.setStyleSheet("background:transparent;font-family:Arial;border:none;")
+        lay.addWidget(lbl)
+        lay.addStretch()
+        # Lighter-blue ▼ dropdown tab on the right (the split you liked)
+        self._arrow = QLabel("▼")
+        self._arrow.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self._arrow.setAlignment(Qt.AlignCenter)
+        self._arrow.setFixedWidth(40)
+        self._arrow.setStyleSheet(
+            "color:white;background-color:#5AA0E9;"
+            "border-top-right-radius:8px;border-bottom-right-radius:8px;"
+            "font-family:Arial;font-size:12px;font-weight:bold;")
+        lay.addWidget(self._arrow)
 
-    def _toggle_arrow(self):
-        self._expanded = not self._expanded
-        self.arrow_btn.setText("▲" if self._expanded else "▼")
-        self.arrow_clicked.emit()
+    def mouseReleaseEvent(self, event):
+        if self.rect().contains(event.position().toPoint()):
+            if event.position().x() >= self.width() - self.ARROW_ZONE:
+                self.arrow_clicked.emit()
+            else:
+                self.run_clicked.emit()
+        super().mouseReleaseEvent(event)
 
     def set_enabled(self, enabled):
-        self.run_btn.setEnabled(enabled)
-        self.arrow_btn.setEnabled(enabled)
+        self.setEnabled(enabled)
 
 
 # =========================
@@ -2338,18 +2328,19 @@ class SAXWindow(QMainWindow):
         )
         self.setup_revit_btn = QPushButton("")
         self.setup_revit_btn.setMinimumHeight(38)
+        self.setup_revit_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.setup_revit_btn.setStyleSheet(revit_style)
         self.setup_revit_btn.setEnabled(False)
         _rl = QHBoxLayout(self.setup_revit_btn)
-        _rl.setContentsMargins(14, 0, 0, 0)
+        _rl.setContentsMargins(14, 0, 14, 0)
         _rl.setSpacing(0)
         _r_lbl = QLabel(
-            '<span style="color:#FFFFFF;font-size:18px;font-weight:bold;">R</span>'
-            '&nbsp;&nbsp;&nbsp;'
+            '<span style="color:#0D2A4A;font-size:18px;font-weight:bold;">R</span>'
+            '&nbsp;&nbsp;'
             '<span style="color:white;font-size:13px;font-weight:bold;">SETUP REVIT&nbsp;&nbsp;▶▶</span>')
         _r_lbl.setTextFormat(Qt.RichText)
         _r_lbl.setAttribute(Qt.WA_TransparentForMouseEvents)
-        _r_lbl.setStyleSheet("background:transparent;font-family:Arial;")
+        _r_lbl.setStyleSheet("background:transparent;font-family:Arial;border:none;")
         _rl.addWidget(_r_lbl)
         _rl.addStretch()
         ll.addWidget(self.setup_revit_btn)
