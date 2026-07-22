@@ -202,15 +202,15 @@ SCRIPTS = {
     "tot_notify":   "tot_notify.py",
 }
 
-NORMAL_STAGES  = ["apn", "tot", "asce", "lat", "vert"]
-TOT_STAGES     = ["apn", "tot", "tot_location", "tot_seismic", "tot_lat", "tot_vert"]
+NORMAL_STAGES  = ["apn", "tot", "asce", "vert", "lat"]
+TOT_STAGES     = ["apn", "tot", "tot_location", "tot_seismic", "tot_vert", "tot_lat"]
 DEFAULT_STAGES = NORMAL_STAGES
 
 STAGE_LABELS = {
     "info":       "Project Info",
     "monday":     "Upload Contract + Location",
-    "apn":        "APN Verification",
-    "tot":        "TOT Verification",
+    "apn":        "APN + TOT Verification",
+    "tot":        "TOT Snow Load",
     "asce":       "ASCE Hazard Data",
     "lat":        "Lateral Calcs",
     "vert":       "Vertical Calcs",
@@ -228,12 +228,12 @@ DEPENDENCIES = {
     "apn":      ["info"],
     "tot":      ["info", "apn"],
     "asce":     ["info", "apn", "tot"],
-    "lat":      ["info", "apn", "tot", "asce"],
-    "vert":     ["info", "apn", "tot", "asce", "lat"],
+    "vert":     ["info", "apn", "tot", "asce"],
+    "lat":      ["info", "apn", "tot", "asce", "vert"],
     "tot_location": ["info"],
     "tot_seismic":  ["info"],
-    "tot_lat":      ["info", "tot_location", "tot_seismic"],
-    "tot_vert":     ["info", "tot_lat"],
+    "tot_vert":     ["info", "tot_location", "tot_seismic"],
+    "tot_lat":      ["info", "tot_location", "tot_seismic", "tot_vert"],
     "monday":   ["info"],
     "sync": [], "notify": [], "tot_sync": [], "tot_notify": [],
 }
@@ -259,9 +259,9 @@ SCRIPT_STEPS = {
     "lat":      ["Reading INFO file", "Finding ASCE PDF",
                  "Copying template", "Extracting seismic values",
                  "Extracting wind values", "Writing Excel"],
-    "vert":     ["Reading INFO file", "Finding LAT file",
-                 "Copying template", "Copying cover data",
-                 "Writing snow load", "Saving Excel"],
+    "vert":     ["Reading INFO file", "Copying template",
+                 "Writing cover data", "Writing snow load",
+                 "Computing RSL", "Saving Excel"],
     "tot_location": ["Reading INFO file", "Opening Google Maps",
                      "Searching address", "Switching to satellite",
                      "Taking screenshot", "Updating INFO file"],
@@ -272,9 +272,9 @@ SCRIPT_STEPS = {
     "tot_lat":      ["Reading INFO file", "Copying TOT LAT template",
                      "Writing cover data", "Inserting screenshots",
                      "Writing seismic values", "Saving Excel"],
-    "tot_vert":     ["Reading INFO file", "Finding TOT LAT file",
-                     "Copying TOT VERT template", "Copying cover data",
-                     "Writing snow load", "Saving Excel"],
+    "tot_vert":     ["Reading INFO file", "Copying TOT VERT template",
+                     "Writing cover data", "Writing snow load",
+                     "Computing RSL", "Saving Excel"],
 }
 
 # =========================
@@ -1334,6 +1334,11 @@ class XLSelectDialog(SAXDialog):
 
         row = QHBoxLayout()
         row.setSpacing(8)
+
+        skip_btn = QPushButton("SKIP THIS STAGE")
+        skip_btn.setStyleSheet(DIALOG_BTN_GRAY)
+        skip_btn.clicked.connect(lambda: self.done(3))
+        row.addWidget(skip_btn)
         row.addStretch()
 
         self.update_btn = QPushButton("UPDATE SELECTED")
@@ -1554,6 +1559,7 @@ class ScriptRunner(QObject):
         self._xl_paths          = []
         self._current_stage_key = ""
         self._stage_had_warning = False
+        self._headless          = True   # "Work in Background" — passed to scripts
 
     def stop(self):
         self._stopped = True
@@ -1604,7 +1610,8 @@ class ScriptRunner(QObject):
             cmd = [sys.executable, "-u", path, project_number]
             if force:
                 cmd.append("--force")
-            env = {**os.environ, "SAX_UI": "1"}   # enables INFO change-confirm prompts
+            env = {**os.environ, "SAX_UI": "1",
+                   "SAX_HEADLESS": "1" if self._headless else "0"}
             self._proc = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
@@ -2087,17 +2094,16 @@ class SAXWindow(QMainWindow):
             return
         dlg = XLSelectDialog(self, files, file_type)
         result = self._exec_dialog(dlg)
-        if result == 2 and dlg.selected_file:
+        if result == 3:
+            runner.put_result("SKIP")
+        elif result == 2 and dlg.selected_file:
             runner.put_result(f"UPDATE:{dlg.selected_file}")
         else:
             runner.put_result("NEW")
 
     def handle_xl_complete(self, paths_str):
         paths = [p for p in paths_str.split("|") if p.strip()]
-        try:
-            from config import HEADLESS as _headless
-        except:
-            _headless = False
+        _headless = runner._headless
         dlg    = XLCompleteDialog(self, paths, headless=_headless)
         result = self._exec_dialog(dlg)
         if result == QDialog.Accepted:
@@ -2114,7 +2120,8 @@ class SAXWindow(QMainWindow):
             self.append_log("XL files closed.")
             runner.put_result("CLOSE")
         self._stop_pipeline_clock(success=True)
-        self.append_log("=== PIPELINE COMPLETE ===")
+        _e = self._pipeline_seconds
+        self.append_log(f"=== PIPELINE COMPLETE — {_e // 60}:{_e % 60:02d} ===")
 
     def handle_consulting(self, payload):
         parts    = payload.split("|")
@@ -2295,7 +2302,7 @@ class SAXWindow(QMainWindow):
         self.open_contract_btn = _grid_btn("📋  OPEN CONTRACT",    self.open_contract_pdf)
         self.apn_btn           = _grid_btn("📍  APN + TOT VERIFICATION", lambda: self.run_single("apn", force=True))
         self.upload_btn        = _grid_btn("⬆️  UPLOAD CONTRACT",  lambda: self.run_single("monday"))
-        self.tot_btn           = _grid_btn("❄️  TOT VERIFICATION", lambda: self.run_single("tot", force=True))
+        self.tot_btn           = _grid_btn("❄️  TOT SNOW LOAD", lambda: self.run_single("tot", force=True))
         self.extract_btn       = _grid_btn("✂️  EXTRACT CONTRACT", lambda: self.run_single("info", force=True))
 
         btn_grid = QGridLayout()
@@ -2583,14 +2590,14 @@ class SAXWindow(QMainWindow):
             ("SNOW LOAD", "tot"),
             ("LOCATION", "tot_location"),
             ("SEISMIC REPORT", "tot_seismic"),
-            ("LAT XL", "tot_lat"),
             ("VERT XL", "tot_vert"),
+            ("LAT XL", "tot_lat"),
         ]
         dropdown_normal = [
             ("APN + TOT VERIFICATION", "apn"),
             ("ASCE HAZARD", "asce"),
-            ("LAT XL", "lat"),
             ("VERT XL", "vert"),
+            ("LAT XL", "lat"),
         ]
         if "tot_lat" in self.active_stages:
             items = dropdown_tot
@@ -2625,7 +2632,7 @@ class SAXWindow(QMainWindow):
 
     def _build_stage_dots_greyed(self):
         """Show both TOT and Normal stages greyed — pre-TOT determination."""
-        all_stages = ["apn", "tot", "tot_location", "tot_seismic", "tot_lat", "tot_vert"]
+        all_stages = ["apn", "tot", "tot_location", "tot_seismic", "tot_vert", "tot_lat"]
         while self.stage_indicator_layout.count():
             item = self.stage_indicator_layout.takeAt(0)
             if item.widget():
@@ -2781,39 +2788,20 @@ class SAXWindow(QMainWindow):
         self.project_input.lineEdit().setText(self.project_input.itemText(index))
 
     def _init_headless_state(self):
-        """Always default to background ON at every launch — force HEADLESS=True."""
-        try:
-            cfg = os.path.join(SHARED_DIR, "config.py")
-            with open(cfg, "r", encoding="utf-8") as f:
-                content = f.read()
-            if "HEADLESS = False" in content:
-                content = content.replace("HEADLESS = False", "HEADLESS = True")
-                with open(cfg, "w", encoding="utf-8") as f:
-                    f.write(content)
-        except Exception:
-            pass
+        """Always default to background ON at every launch."""
+        runner._headless = True
         self.headless_btn.setChecked(True)
         self.headless_btn.setText("🟢  Work in Background: ON")
 
     def toggle_headless(self):
         checked = self.headless_btn.isChecked()
-        # Update config.py on disk
-        config_path = os.path.join(SHARED_DIR, "config.py")
-        try:
-            with open(config_path, "r", encoding="utf-8") as f:
-                content = f.read()
-            if checked:
-                content = content.replace("HEADLESS = False", "HEADLESS = True")
-                self.headless_btn.setText("🟢  Work in Background: ON")
-                self.append_log("Work in Background: ON — browsers will run silently")
-            else:
-                content = content.replace("HEADLESS = True", "HEADLESS = False")
-                self.headless_btn.setText("⬛  Work in Background: OFF")
-                self.append_log("Work in Background: OFF — browsers will be visible")
-            with open(config_path, "w", encoding="utf-8") as f:
-                f.write(content)
-        except Exception as e:
-            self.append_log(f"ERROR: Could not update config: {e}")
+        runner._headless = checked   # passed to each script via SAX_HEADLESS env
+        if checked:
+            self.headless_btn.setText("🟢  Work in Background: ON")
+            self.append_log("Work in Background: ON — browsers will run silently")
+        else:
+            self.headless_btn.setText("⬛  Work in Background: OFF")
+            self.append_log("Work in Background: OFF — browsers will be visible")
 
     def clean_excel_locks(self):
         if not self.project_root:
@@ -3126,7 +3114,8 @@ class SAXWindow(QMainWindow):
             color = RED
         elif any(w in message for w in [
             "SUCCESS", "COMPLETE", "DONE",
-            "UPLOADED", "FOUND", "CREATED", "SAVED"
+            "UPLOADED", "FOUND", "CREATED", "SAVED",
+            "VERIFIED", "100% MATCH"
         ]):
             color = GREEN
         elif any(w in message for w in ["WARNING", "WARN", "MISMATCH"]):
@@ -3411,9 +3400,9 @@ class SAXWindow(QMainWindow):
                     )
                     tot = info_data.get("TOT", "").strip()
                     if tot == "Y":
-                        remaining = ["tot_location", "tot_seismic", "tot_lat", "tot_vert"]
+                        remaining = ["tot_location", "tot_seismic", "tot_vert", "tot_lat"]
                     else:
-                        remaining = ["asce", "lat", "vert"]
+                        remaining = ["asce", "vert", "lat"]
                     # Only add stages not already in list
                     for s in remaining:
                         if s not in stages_list:
@@ -3428,6 +3417,7 @@ class SAXWindow(QMainWindow):
 
     def _finish_load_silent(self, tot):
         """Update workflow badges and stage buttons after TOT determined mid-pipeline."""
+        self.tot_status = tot
         if tot == "Y":
             self.tot_badge.setText("⬡  TOT WORKFLOW")
             self.tot_badge.setStyleSheet(f"color:{YELLOW};")
@@ -3447,11 +3437,32 @@ class SAXWindow(QMainWindow):
     def _after_run_all(self):
         failed = getattr(self, "_run_failed", False)
         self._run_failed = False
-        self.append_log("=== PIPELINE STOPPED ===" if failed else "=== PIPELINE COMPLETE ===")
+        if failed:
+            self.append_log("=== PIPELINE STOPPED ===")
+        else:
+            _e = self._pipeline_seconds
+            self.append_log(f"=== PIPELINE COMPLETE — {_e // 60}:{_e % 60:02d} ===")
         self._stop_clock()                       # freeze stage clock at its time
         self._stop_pipeline_clock(success=not failed)  # freeze pipeline clock
         self._stop_shimmer()                     # stop pulsing, keep the fill
+        self._refresh_workflow_after_run()       # TOT may now be known -> update
         self._re_enable_ui()
+
+    def _refresh_workflow_after_run(self):
+        """After any run, if TOT is now known (e.g. from a standalone APN + TOT
+        Verification), update the badge, active stages, dots, and dropdown."""
+        try:
+            info = get_info_data(self.project_root, self.project_number)
+        except Exception:
+            return
+        if not info:
+            return
+        tot = info.get("TOT", "").strip()
+        if tot in ("Y", "N") and tot != getattr(self, "tot_status", ""):
+            self._finish_load_silent(tot)   # sets tot_status + rebuilds workflow
+            self.append_log(
+                f"Workflow updated — {'TOT' if tot == 'Y' else 'NORMAL'} workflow"
+            )
 
 
 # =========================
